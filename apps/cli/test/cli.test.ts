@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
 const MAIN = new URL("../src/main.ts", import.meta.url).pathname;
-const cli = (args: string[], input = "") => spawnSync(process.execPath, ["--conditions=source", "--no-warnings", MAIN, ...args], { input, encoding: "utf8" });
 const dir = mkdtempSync(join(tmpdir(), "scrappy-cli-"));
+const CLIP = join(dir, "clipboard.txt");
+// A file-backed fake clipboard at the system boundary; the real OS clipboard has its own test.
+const fakeClipboard = { SCRAPPY_PASTE_CMD: `cat '${CLIP}'`, SCRAPPY_COPY_CMD: `cat > '${CLIP}'` };
+const cli = (args: string[], input = "") =>
+  spawnSync(process.execPath, ["--conditions=source", "--no-warnings", MAIN, ...args], { input, encoding: "utf8", env: { ...process.env, ...fakeClipboard } });
 
 test("sanitize: stdin to stdout, byte-for-byte apart from placeholders", () => {
   const r = cli(["sanitize"], "user=john@example.com\npassword=hunter2\n");
@@ -45,8 +50,73 @@ test("--config adds custom detectors and policy", () => {
   assert.equal(r.stdout, "account [ACCOUNT_NUMBER_1] for a@b.io");
 });
 
+test("--clipboard sanitizes the clipboard in place and reports only types", () => {
+  writeFileSync(CLIP, "mail john@example.com\npassword=hunter2");
+  const r = cli(["sanitize", "--clipboard"]);
+  assert.equal(r.status, 0);
+  assert.equal(readFileSync(CLIP, "utf8"), "mail [EMAIL_1]\npassword=[PASSWORD_1]");
+  assert.equal(r.stdout, "");
+  assert.match(r.stderr, /2 values .*EMAIL.*PASSWORD/);
+  assert.ok(!/john|hunter2/.test(r.stderr));
+});
+
+test("inspect --clipboard reads the clipboard and leaves it untouched", () => {
+  writeFileSync(CLIP, "a@b.io");
+  const r = cli(["inspect", "--clipboard"]);
+  assert.equal(JSON.parse(r.stdout).stats.findingCount, 1);
+  assert.equal(readFileSync(CLIP, "utf8"), "a@b.io");
+});
+
+test("session: sanitize clipboard, paste AI reply back, restore originals, quit", async () => {
+  writeFileSync(CLIP, "Refund john@example.com, password=hunter2");
+  const child = spawn(process.execPath, ["--conditions=source", "--no-warnings", MAIN, "session"], { env: { ...process.env, ...fakeClipboard } });
+  let stderr = "";
+  child.stderr.setEncoding("utf8").on("data", (d: string) => (stderr += d));
+  const closed = once(child, "close");
+  const waitFor = async (pattern: RegExp) => {
+    while (!pattern.test(stderr)) {
+      const exited = await Promise.race([once(child.stderr, "data").then(() => false), closed.then(() => true)]);
+      if (exited && !pattern.test(stderr)) assert.fail(`exited before ${pattern}; stderr: ${stderr}`);
+    }
+  };
+
+  child.stdin.write("s");
+  await waitFor(/sanitized 2 values/);
+  assert.equal(readFileSync(CLIP, "utf8"), "Refund [EMAIL_1], password=[PASSWORD_1]");
+
+  writeFileSync(CLIP, "Done: refunded [EMAIL_1]. Rotate [PASSWORD_1]. Ignore [EMAIL_7].");
+  child.stdin.write("r");
+  await waitFor(/restored 2 values/);
+  assert.equal(readFileSync(CLIP, "utf8"), "Done: refunded john@example.com. Rotate hunter2. Ignore [EMAIL_7].");
+
+  child.stdin.write("q");
+  const [code] = await closed;
+  assert.equal(code, 0);
+  assert.match(stderr, /memory only/);
+  assert.ok(!/john|hunter2/.test(stderr), "originals must never be printed");
+});
+
+test("real macOS clipboard via pbcopy/pbpaste", { skip: process.platform !== "darwin" && "macOS only" }, (t) => {
+  const saved = spawnSync("pbpaste", { encoding: "utf8" }).stdout;
+  t.after(() => spawnSync("pbcopy", { input: saved }));
+  const { SCRAPPY_PASTE_CMD, SCRAPPY_COPY_CMD, ...env } = { ...process.env, ...fakeClipboard };
+  spawnSync("pbcopy", { input: "mail a@b.io ✓" });
+  const r = spawnSync(process.execPath, ["--conditions=source", "--no-warnings", MAIN, "sanitize", "--clipboard"], { encoding: "utf8", env });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(spawnSync("pbpaste", { encoding: "utf8" }).stdout, "mail [EMAIL_1] ✓");
+});
+
+test("--version prints the package version", () => {
+  const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  for (const flag of ["--version", "-v"]) {
+    const r = cli([flag]);
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, `${version}\n`);
+  }
+});
+
 test("invalid usage exits 2", () => {
-  for (const args of [[], ["explode"], ["sanitize", "extra"], ["sanitize", "--format", "xml"], ["sanitize", "--nope"]]) {
+  for (const args of [[], ["explode"], ["sanitize", "extra"], ["sanitize", "--format", "xml"], ["sanitize", "--nope"], ["sanitize", "--clipboard", "-i", "x"], ["session", "-i", "x"], ["session", "--format", "json"]]) {
     const r = cli(args);
     assert.equal(r.status, 2, args.join(" "));
     assert.equal(r.stdout, "");

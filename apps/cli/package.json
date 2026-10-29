@@ -1,9 +1,26 @@
 {
-  "name": "@scrappy/cli",
-  "version": "0.0.0",
+  "name": "scrappy-redact",
+  "version": "0.1.0",
+  "description": "Strip secrets and personal data from text before it goes to an AI tool. Runs locally; nothing leaves your machine.",
+  "keywords": ["redact", "sanitize", "pii", "secrets", "privacy", "ai", "llm", "cli"],
+  "license": "MIT",
+  "author": "Eyuel Tefera",
   "type": "module",
-  "engines": { "node": ">=22.18" },
-  "bin": { "scrappy": "./dist/main.js" },
-  "files": ["dist"],
-  "dependencies": { "@scrappy/sdk": "workspace:*" }
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "scrappy": "dist/scrappy.js"
+  },
+  "files": [
+    "dist/scrappy.js"
+  ],
+  "scripts": {
+    "bundle": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --conditions=source --legal-comments=none --outfile=dist/scrappy.js",
+    "prepack": "cp ../../README.md ../../LICENSE . && pnpm run bundle"
+  },
+  "devDependencies": {
+    "@scrappy/sdk": "workspace:*",
+    "esbuild": "^0.28.2"
+  }
 }

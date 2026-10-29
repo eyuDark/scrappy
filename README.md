@@ -1,0 +1,90 @@
+# Scrappy
+
+Strip secrets and personal data from text before you paste it into ChatGPT, Claude or any other AI tool. Sensitive values become typed placeholders, so the AI still understands the text:
+
+```
+Payment failed for john@example.com, key sk-ant-api03-…
+Payment failed for [EMAIL_1], key [API_KEY_1]
+```
+
+Everything runs locally. Scrappy makes no network calls, and nothing is written to disk.
+
+## Install
+
+Requires Node.js 22 or later.
+
+```sh
+npm install -g scrappy-redact
+```
+
+The command is `scrappy`.
+
+## Use
+
+**Clipboard, the everyday flow.** Copy the text, run this, then paste:
+
+```sh
+scrappy sanitize --clipboard
+```
+
+**Get real values back in the AI's reply.** `scrappy session` remembers what it replaced until you quit:
+
+```
+$ scrappy session
+  s  sanitize the clipboard in place (then paste it into your AI tool)
+  r  restore originals into the clipboard (after copying the AI's reply)
+  q  quit
+```
+
+The originals live only in that process's memory and are discarded when you press `q`. Placeholders the AI invents, such as `[EMAIL_7]`, are left untouched.
+
+**Pipes and files:**
+
+```sh
+cat app.log | scrappy sanitize > safe.log
+scrappy sanitize --input request.json --format json   # keeps the JSON structure
+scrappy inspect --input app.log                       # what was found, never the values
+```
+
+Stdout carries only sanitized content. Exit codes are `0` for success, `1` for an input, config or processing error, and `2` for invalid usage. Your input file is never modified.
+
+## What it detects
+
+| Type | Examples |
+|---|---|
+| `EMAIL` | `john.doe+ci@mail.example.co.uk` |
+| `API_KEY` | Anthropic, OpenAI, GitHub, GitLab, Slack, AWS access key IDs, Google, Stripe |
+| `JWT` | `eyJhbGciOi….eyJzdWIi….sig` |
+| `ACCESS_TOKEN` | `Authorization: Bearer …` |
+| `PASSWORD` | `password=…`, `"api_key": "…"`, `DB_PASSWORD: …`, `postgres://user:PASSWORD@host` |
+| `PRIVATE_KEY` | PEM and PGP private key blocks, including truncated ones |
+
+Add your own identifiers, such as account or customer IDs, with a config file:
+
+```json
+{
+  "customDetectors": [
+    { "id": "account", "type": "ACCOUNT_NUMBER", "pattern": "account (?<value>\\d{6})" }
+  ],
+  "policy": { "allowlist": ["support@mycompany.com"] }
+}
+```
+
+```sh
+scrappy sanitize --clipboard --config scrappy.json
+```
+
+If the pattern has a group named `value`, only that part is replaced. Otherwise the whole match is.
+
+## What it does not do
+
+Scrappy reduces what you share. It does not guarantee anonymity.
+
+- It does **not** detect names, street addresses, phone numbers or payment cards yet.
+- Secrets in formats it doesn't know, such as a random internal token with no telltale prefix or key name, can slip through. Check the output before you paste anything highly sensitive.
+- Combinations of harmless-looking details can still identify a person.
+- Clipboard support uses `pbcopy`/`pbpaste` on macOS and `wl-clipboard` or `xclip` on Linux. Windows is untested. Elsewhere, set `SCRAPPY_PASTE_CMD` and `SCRAPPY_COPY_CMD`.
+
+## License
+
+MIT

@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project status
-Milestones 1–4 are done: core, detectors, SDK and CLI, all tested. Next: **M5 – one AI-provider adapter** (`packages/middleware` doesn't exist yet). P1 detectors (phone, payment card) aren't built yet.
+Milestones 1–4 are done: core, detectors, SDK and CLI, all tested. **Current priority: shipping the CLI** as the npm package `scrappy-redact` (command: `scrappy`), installed with `npm i -g`. It is ready to publish but not published yet. AI-provider middleware (M5) is deferred. P1 detectors (phone, payment card) aren't built yet.
 
 ## What Scrappy is
 Scrappy is a local-first TypeScript library. It finds sensitive values (credentials, PII, custom identifiers) in text or JSON headed for an AI provider and replaces them with typed placeholders such as `[EMAIL_1]`, so the AI still gets useful context. It is developer-first: an SDK, a CLI and AI-client middleware, all built on one core engine.
@@ -18,13 +18,15 @@ Scrappy is a local-first TypeScript library. It finds sensitive values (credenti
 - pnpm workspace monorepo. No Nx, database, server, Redis or queues.
 
 ## Commands
-- `pnpm install`
+- `pnpm install` (pnpm 11; `allowBuilds` in `pnpm-workspace.yaml` deliberately skips esbuild's install script)
 - `pnpm build`: runs `tsc -b`. This type-checks and builds every package (project references). Test files aren't part of the build.
 - `pnpm typecheck`: runs the build, then type-checks the test files (`tsconfig.test.json`). `node --test` strips types without checking them, so run this before calling anything done.
 - `pnpm test`: runs every test with Node's built-in `node:test` runner, no build needed.
 - Single file: `node --conditions=source --test packages/core/test/session.test.ts`
 - Single test: add `--test-name-pattern="dispose"`
-- Run the CLI from source: `echo "a@b.io" | node --conditions=source apps/cli/src/main.ts sanitize`. The built bin is `apps/cli/dist/main.js`.
+- Run the CLI from source: `echo "a@b.io" | node --conditions=source apps/cli/src/main.ts sanitize`.
+- `pnpm --filter scrappy-redact bundle`: esbuild bundles the CLI and all workspace packages into one dependency-free file, `apps/cli/dist/scrappy.js`. That file is the published artifact. `tsc` output in `dist/` is only a side effect of type-checking.
+- `pnpm --filter scrappy-redact pack`: `prepack` copies the root `README.md` and `LICENSE` into `apps/cli/` (gitignored there), then bundles. Publish with `pnpm publish`, never `npm publish`: pnpm rewrites the `workspace:` ranges. `apps/cli/test/package.test.ts` packs, installs offline and runs the tarball.
 
 ## Architecture
 Pipeline (in `@scrappy/core`):
@@ -34,7 +36,7 @@ Packages:
 - `packages/core`: orchestration, public types, span validation, conflict resolution, redaction, restoration, errors. It has **no** dependency on AI providers, the network or any framework. Policy logic stays here until a separate package is clearly worth it.
 - `packages/detectors`: each detector implements `Detector { id, supportedTypes, detect(input): CandidateMatch[] }`. Detectors only return spans into the original input and never modify text. Core attaches the detector id itself, so `CandidateMatch` carries no `detector` field. `supportedTypes` is enforced in two ways. A detector whose types are all disabled by the policy is skipped. A candidate with an undeclared type is a `DETECTOR_FAILED` error, so the call fails closed.
 - `packages/sdk`: the ergonomic API (`sanitize`, `createSession`, `sanitizeJson`). It wraps core and never adds a second detection engine.
-- `apps/cli`: consumes the SDK and handles args, stdin/stdout, files, config validation and exit codes.
+- `apps/cli`: the published package `scrappy-redact`. It consumes the SDK as a devDependency (bundled in) and handles args, stdin/stdout, files, config validation and exit codes. `clipboard.ts` is the OS clipboard adapter: pbcopy/pbpaste, wl-clipboard or xclip, PowerShell (untested), or the `SCRAPPY_PASTE_CMD`/`SCRAPPY_COPY_CMD` overrides, which tests use as a file-backed fake. `session.ts` is the interactive `scrappy session`.
 - `packages/middleware`: thin wrappers around an existing AI client, with provider-specific code in adapters. Start with one provider.
 - `tests/fixtures`, `tests/adversarial`, `tests/integration`: shared corpora, plus precision and recall measured separately for each detector.
 
@@ -60,7 +62,8 @@ Detection, policy, transformation and provider integration are separate responsi
 - Exit codes: `0` success, `1` input, config or processing error, `2` invalid usage.
 - Input files are never overwritten by default, and config is validated before processing.
 - `scrappy inspect` reports types, offsets and counts, never the matched values.
-- The CLI has no reversible mode: a mapping that lives only for one process is useless there.
+- Reversible mode exists only in `scrappy session`. The mapping lives in that process's memory and is discarded on quit. The session prints counts and types, never values. Restored values go only to the clipboard.
+- `--clipboard` writes sanitized output back to the clipboard and prints a summary to stderr, so stdout stays empty.
 
 ## Detector priorities
 - **P0:** email, API keys and access tokens, private keys, passwords in assignments
