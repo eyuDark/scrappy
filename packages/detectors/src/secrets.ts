@@ -87,3 +87,22 @@ export const privateKeyDetector: Detector = {
     return out;
   },
 };
+
+/**
+ * Random-looking tokens with no known prefix: 24+ chars mixing upper, lower and digits, with a digit
+ * before the end (identifiers end in "2024"/"V2"), and mostly NOT made of words. Identifiers and URL
+ * paths are built from words (Cipher, Poly, Reference); random tokens rarely hold 3 lowercase letters
+ * in a row. Hex hashes and UUIDs have no uppercase. Low confidence, so known detectors win overlaps.
+ */
+export const unknownTokenDetector = createPatternDetector({
+  id: "unknown-token",
+  type: "SECRET",
+  confidence: 0.6,
+  pattern: /(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{24,}={0,2}(?![A-Za-z0-9+/_=-])/,
+  validate(value) {
+    const token = value.replace(/=+$/, "");
+    if (!/[a-z]/.test(token) || !/[A-Z]/.test(token) || !/\d/.test(token.replace(/\d+$/, ""))) return false;
+    const wordChars = (token.match(/[A-Z]?[a-z]{3,}/g) ?? []).join("").length;
+    return wordChars / token.length < 0.5;
+  },
+});

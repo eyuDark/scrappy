@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project status
-Milestones 1–4 are done: core, detectors, SDK and CLI, all tested. **Current priority: shipping the CLI** as the npm package `scrappy-redact` (command: `scrappy`), installed with `npm i -g`. It is ready to publish but not published yet. AI-provider middleware (M5) is deferred. P1 detectors (phone, payment card) aren't built yet.
+The CLI is published on npm as `scrappy-redact` (command: `scrappy`); 0.1.0 is live, and **0.2.0** (cards, phones, unknown tokens, an accuracy corpus, CI) is ready. The GitHub repo is public at https://github.com/eyuDark/scrappy, with releases tagged `vX.Y.Z`. The npm account `eyud` has 2FA (auth-and-writes) set up with a security key, so publishing must be run by the user in a real terminal: `npm publish <tarball from pnpm pack>`. AI-provider middleware (M5) is deferred. Names and addresses (P2) aren't built.
 
 ## What Scrappy is
 Scrappy is a local-first TypeScript library. It finds sensitive values (credentials, PII, custom identifiers) in text or JSON headed for an AI provider and replaces them with typed placeholders such as `[EMAIL_1]`, so the AI still gets useful context. It is developer-first: an SDK, a CLI and AI-client middleware, all built on one core engine.
@@ -38,7 +38,7 @@ Packages:
 - `packages/sdk`: the ergonomic API (`sanitize`, `createSession`, `sanitizeJson`). It wraps core and never adds a second detection engine.
 - `apps/cli`: the published package `scrappy-redact`. It consumes the SDK as a devDependency (bundled in) and handles args, stdin/stdout, files, config validation and exit codes. `clipboard.ts` is the OS clipboard adapter: pbcopy/pbpaste, wl-clipboard or xclip, PowerShell (untested), or the `SCRAPPY_PASTE_CMD`/`SCRAPPY_COPY_CMD` overrides, which tests use as a file-backed fake. `session.ts` is the interactive `scrappy session`.
 - `packages/middleware`: thin wrappers around an existing AI client, with provider-specific code in adapters. Start with one provider.
-- `tests/fixtures`, `tests/adversarial`, `tests/integration`: shared corpora, plus precision and recall measured separately for each detector.
+- `packages/sdk/test/corpus/`: realistic labeled samples (`[[TYPE|value]]` inline; `@fake:<prefix>:<n>` generates key-shaped values at runtime so GitHub secret scanning never sees one). `corpus.test.ts` runs them through `sanitize` with the default detectors and fails if any type's recall drops below its floor (100%, except PHONE 90% and SECRET 80%) or if there are more than 2 false positives. Add a sample there whenever a detector misses something real.
 
 Detection, policy, transformation and provider integration are separate responsibilities. Keep them that way.
 
@@ -66,9 +66,10 @@ Detection, policy, transformation and provider integration are separate responsi
 - `--clipboard` writes sanitized output back to the clipboard and prints a summary to stderr, so stdout stays empty.
 
 ## Detector priorities
-- **P0:** email, API keys and access tokens, private keys, passwords in assignments
-- **P1:** phone, payment card (Luhn), JWT, configurable account numbers
-- **P2:** names and addresses (optional local NER), custom identifiers
+- **Done:** email, API keys and access tokens, private keys, passwords in assignments, JWT, payment cards (structure + issuer prefix + Luhn), phones (country-agnostic: `+` international, or a number within 20 chars after a phone keyword), unknown tokens (`SECRET`).
+- **Not built:** names and addresses (optional local NER). Account numbers stay user-configured through `customDetectors`.
+- **Confidence ladder** (it doubles as precedence): private key 0.99 > JWT, URL credentials 0.95 > API key, email, card 0.9 > bearer, international phone 0.85 > password assignment, keyword phone 0.8 > unknown token 0.6.
+- **Unknown-token rules** (`secrets.ts`): 24+ chars of `[A-Za-z0-9+/_-]`, with upper, lower and a digit before the end, and less than half the token made of words (`[A-Z]?[a-z]{3,}`). Recall on random base62 is checked to stay at or above 95%. Known accepted false positives: base64 hashes, and URL fragments with ALL-CAPS words.
 
 ## Roadmap
 1. Workspace, public types, detector and policy contracts, error model

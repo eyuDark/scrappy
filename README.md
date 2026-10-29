@@ -58,6 +58,15 @@ Stdout carries only sanitized content. Exit codes are `0` for success, `1` for a
 | `ACCESS_TOKEN` | `Authorization: Bearer …` |
 | `PASSWORD` | `password=…`, `"api_key": "…"`, `DB_PASSWORD: …`, `postgres://user:PASSWORD@host` |
 | `PRIVATE_KEY` | PEM and PGP private key blocks, including truncated ones |
+| `PAYMENT_CARD` | Visa, Mastercard, Amex, Discover and more; checked with the card checksum (Luhn) |
+| `PHONE` | International numbers (`+251 911 234 567`), or any number right after a word like phone, call, mobile or WhatsApp |
+| `SECRET` | Random-looking tokens with no known prefix, e.g. `X-Internal-Auth: Hq3Zm8Wv1Ks6…` |
+
+`SECRET` is a best guess. It skips hashes, UUIDs and code identifiers, but it can flag base64 data, such as certificate fingerprints. To turn it off, list the types you want to keep in `enabledTypes` and leave out `SECRET`:
+
+```json
+{ "policy": { "enabledTypes": ["EMAIL", "PHONE", "PAYMENT_CARD", "API_KEY", "ACCESS_TOKEN", "JWT", "PRIVATE_KEY", "PASSWORD"] } }
+```
 
 Add your own identifiers, such as account or customer IDs, with a config file:
 
@@ -80,8 +89,9 @@ If the pattern has a group named `value`, only that part is replaced. Otherwise 
 
 Scrappy reduces what you share. It does not guarantee anonymity.
 
-- It does **not** detect names, street addresses, phone numbers or payment cards yet.
-- Secrets in formats it doesn't know, such as a random internal token with no telltale prefix or key name, can slip through. Check the output before you paste anything highly sensitive.
+- It does **not** detect names or street addresses.
+- Phone numbers written without `+` and without a nearby phone word (e.g. a bare `0911 234 567`) are not detected. If you need them, add a custom detector.
+- Short or word-like secrets (e.g. `Summer2024!` as a bare value, not after `password=`) can slip through. Check the output before you paste anything highly sensitive.
 - Combinations of harmless-looking details can still identify a person.
 - Clipboard support uses `pbcopy`/`pbpaste` on macOS and `wl-clipboard` or `xclip` on Linux. Windows is untested. Elsewhere, set `SCRAPPY_PASTE_CMD` and `SCRAPPY_COPY_CMD`.
 

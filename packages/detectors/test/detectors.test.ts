@@ -9,7 +9,10 @@ import {
   emailDetector,
   jwtDetector,
   passwordAssignmentDetector,
+  paymentCardDetector,
+  phoneDetector,
   privateKeyDetector,
+  unknownTokenDetector,
   urlCredentialsDetector,
 } from "@scrappy/detectors";
 
@@ -74,6 +77,94 @@ test("private keys, including truncated ones", () => {
   assert.deepEqual(matches(privateKeyDetector, "-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----"), []);
 });
 
+test("payment cards: Luhn-valid numbers with a known issuer prefix", () => {
+  for (const card of ["4111 1111 1111 1111", "5555-5555-5555-4444", "378282246310005", "6011111111111117", "4242424242424242", "2223003122003222"]) {
+    assert.deepEqual(matches(paymentCardDetector, `card: ${card}.`), [card], card);
+  }
+  for (const negative of [
+    "order 1234567812345678", // fails Luhn
+    "4111 1111 1111 1112", // fails Luhn
+    "epoch 1730189663021", // no issuer starts with 1
+    "isbn 978-0-306-40615-7",
+    "+251 911 234 567",
+    "4111-1111 1111-1111", // mixed separators
+    "411111111111111111111111", // 24 digits: too long
+  ]) {
+    assert.deepEqual(matches(paymentCardDetector, negative), [], negative);
+  }
+});
+
+test("phones: international numbers, or any number shortly after a phone keyword", () => {
+  const cases: [string, string][] = [
+    ["sms to +251 911 234 567 ok", "+251 911 234 567"],
+    ["dial +1 (415) 555-0134.", "+1 (415) 555-0134"],
+    ["uk office +44 20 7946 0958", "+44 20 7946 0958"],
+    ["+14155550134", "+14155550134"],
+    ["Please call me back at 0911 234 567 today", "0911 234 567"],
+    ["Phone: (415) 555-0134", "(415) 555-0134"],
+    ["SUPPORT_PHONE=0911234567", "0911234567"],
+    ["WhatsApp 0922 345 678", "0922 345 678"],
+    ["tel:+251-911-234-567", "+251-911-234-567"],
+  ];
+  for (const [input, phone] of cases) assert.deepEqual(matches(phoneDetector, input), [phone], input);
+  for (const negative of [
+    "called about order #48213 on Oct 28",
+    "Selam (support lead, ext. 2207)",
+    "version +1.42.0",
+    "retry in +30s",
+    "timestamp 1730189663021",
+    "phone: none on file",
+    "call 3 times",
+    "+1 2", // too few digits
+  ]) {
+    assert.deepEqual(matches(phoneDetector, negative), [], negative);
+  }
+});
+
+test("unknown tokens: random-looking strings without a known prefix", () => {
+  for (const [input, token] of [
+    ["notify?sig=Zt7Kp2Qw9Xr4Lm8Vn3Bc6Hy1Jd5Fg0Sa&x=1", "Zt7Kp2Qw9Xr4Lm8Vn3Bc6Hy1Jd5Fg0Sa"],
+    ["X-Internal-Auth: Hq3Zm8Wv1Ks6Tb0Ny4Jr7Lc2Pf9Dx5", "Hq3Zm8Wv1Ks6Tb0Ny4Jr7Lc2Pf9Dx5"],
+    ["blob u7Hk2P/9qXz+Lr4Vw1Ns8Ty3Mb6Gd0Fe== end", "u7Hk2P/9qXz+Lr4Vw1Ns8Ty3Mb6Gd0Fe=="],
+  ]) {
+    assert.deepEqual(matches(unknownTokenDetector, input!), [token], input);
+  }
+  for (const negative of [
+    "sha=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b",
+    "req=3f6c2a9e-8b1d-4c7a-9e2f-1a2b3c4d5e6f",
+    "api:1.42.0@sha256:5e8f2d6a1c3b7e9f0a2d4c6b8e1f3a5c7d9b0e2f4a6c8d0b2e4f6a8c0d2e4f6a",
+    "resolver getUserByIdAndOrganizationScope2024 resolved",
+    "class ThisIsAVeryLongPascalCaseName42 {}",
+    "SCREAMING_SNAKE_CASE_CONFIG_VALUE_2024",
+    "/srv/app/src/routes/token.ts:58:5",
+    "Tracking number 1Z999AA10123456784",
+    "short Ab1Cd2Ef3Gh4",
+    // Found by scanning real code (@types/node) with 0.2.0 candidates:
+    "algorithm: CipherChaCha20Poly1305Types,",
+    "see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8ClampedArray)",
+    "https://www.openssl.org/docs/man1.0.2/ssl/SSL_CTX_set_options.html",
+    "https://chromedevtools.github.io/devtools-protocol/1-3/Runtime/#type",
+    // Known false positive, accepted: "1/man3/SSL_CIPHER_get_name". Counting all-caps runs as words
+    // fixes it but drops random-token recall below 95%.
+  ]) {
+    assert.deepEqual(matches(unknownTokenDetector, negative), [], negative);
+  }
+});
+
+test("unknown tokens: catches at least 95% of random base62 tokens", (t) => {
+  // Deterministic PRNG so the sample is the same on every run.
+  let seed = 42;
+  const next = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let caught = 0;
+  for (let i = 0; i < 200; i++) {
+    const token = Array.from({ length: 32 }, () => alphabet[Math.floor(next() * alphabet.length)]).join("");
+    if (matches(unknownTokenDetector, `key ${token} end`).length === 1) caught++;
+  }
+  assert.ok(caught >= 190, `caught ${caught}/200`);
+  t.diagnostic(`recall on random base62: ${caught}/200`);
+});
+
 test("custom pattern detector redacts the `value` group and runs validate", () => {
   const account = createPatternDetector({ id: "account", type: "ACCOUNT_NUMBER", pattern: /account (?<value>\d{6})\b/i });
   assert.deepEqual(matches(account, "Account 100284 and account 12"), ["100284"]);
@@ -95,6 +186,15 @@ test("adversarial: 1 MB pathological inputs finish quickly", () => {
     assignments: "password=".repeat(n / 9),
     schemes: "a://b:".repeat(n / 6),
     placeholders: "[A_".repeat(n / 3),
+    digits: "4".repeat(n),
+    spacedDigits: "4 ".repeat(n / 2),
+    dashedDigits: "4-".repeat(n / 2),
+    plusDigits: "+1 ".repeat(n / 3),
+    phoneKeywords: "phone call ".repeat(n / 11),
+    keywordThenDigits: "tel 1 2 ".repeat(n / 8),
+    oneHugeToken: "aB3".repeat(n / 3),
+    manyShortTokens: "aB3dE6gH9jK2mN5pQ8sT1vW4 ".repeat(n / 25),
+    slashRuns: "aB3/".repeat(n / 4),
   };
   for (const [name, input] of Object.entries(inputs)) {
     const started = performance.now();

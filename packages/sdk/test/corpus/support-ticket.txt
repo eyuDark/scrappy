@@ -1,0 +1,7 @@
+Hi team,
+
+Customer [[EMAIL|abebe.kebede@gmail.com]] called about order #48213 on Oct 28. Please call me back at [[PHONE|0911 234 567]] or WhatsApp [[PHONE|+251 922 345 678]].
+They paid with a Mastercard ending 4444 - full number from the screenshot: [[PAYMENT_CARD|5555-5555-5555-4444]]. The Amex on file is [[PAYMENT_CARD|378282246310005]].
+Refund amount: 1,250.00 ETB. Ticket ID: SUP-2026-000731. Tracking number 1Z999AA10123456784. ISBN of the manual: 978-0-306-40615-7.
+Thanks,
+Selam (support lead, ext. 2207)

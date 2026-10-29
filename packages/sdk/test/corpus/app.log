@@ -1,0 +1,7 @@
+2026-10-29T08:14:22.481Z INFO  req=3f6c2a9e-8b1d-4c7a-9e2f-1a2b3c4d5e6f user=[[EMAIL|maria.garcia@shopfast.io]] GET /api/v2/orders?page=2 200 41ms
+2026-10-29T08:14:22.502Z DEBUG outbound headers {"Authorization": "Bearer [[ACCESS_TOKEN|tok_9fK2mQ7xLp3RvT8wZ1nBc4Hd]]", "X-Request-Id": "3f6c2a9e-8b1d-4c7a-9e2f-1a2b3c4d5e6f"}
+2026-10-29T08:14:23.019Z WARN  payment declined card=[[PAYMENT_CARD|4111 1111 1111 1111]] amount=ETB 5,000.00 order=1234567812345678 attempt=3
+2026-10-29T08:14:23.020Z INFO  deploy sha=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b build=1730189663021 node=v22.23.2 host=10.0.4.17:8080
+2026-10-29T08:14:24.117Z ERROR upstream https://hooks.internal.shopfast.io/notify?sig=[[SECRET|Zt7Kp2Qw9Xr4Lm8Vn3Bc6Hy1Jd5Fg0Sa]] failed: ECONNRESET
+2026-10-29T08:14:25.300Z INFO  sms sent to [[PHONE|+251 911 234 567]] template=order_shipped
+2026-10-29T08:14:25.301Z INFO  resolver getUserByIdAndOrganizationScope2024 resolved in 3ms

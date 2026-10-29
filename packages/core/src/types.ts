@@ -10,6 +10,8 @@ export const SENSITIVE_TYPES = [
   "JWT",
   "PRIVATE_KEY",
   "PASSWORD",
+  /** A random-looking token with no known prefix. */
+  "SECRET",
   "CUSTOM",
 ] as const;
 
