@@ -5,6 +5,13 @@
   "keywords": ["redact", "sanitize", "pii", "secrets", "privacy", "ai", "llm", "cli"],
   "license": "MIT",
   "author": "Eyuel Tefera",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eyuDark/scrappy.git",
+    "directory": "apps/cli"
+  },
+  "homepage": "https://github.com/eyuDark/scrappy#readme",
+  "bugs": "https://github.com/eyuDark/scrappy/issues",
   "type": "module",
   "engines": {
     "node": ">=22"
