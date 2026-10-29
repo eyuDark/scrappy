@@ -1,0 +1,9 @@
+{
+  "name": "@scrappy/cli",
+  "version": "0.0.0",
+  "type": "module",
+  "engines": { "node": ">=22.18" },
+  "bin": { "scrappy": "./dist/main.js" },
+  "files": ["dist"],
+  "dependencies": { "@scrappy/sdk": "workspace:*" }
+}

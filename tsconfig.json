@@ -1,0 +1,4 @@
+{
+  "files": [],
+  "references": [{ "path": "packages/core" }, { "path": "packages/detectors" }, { "path": "packages/sdk" }, { "path": "apps/cli" }]
+}
