@@ -18,6 +18,7 @@ test("the packed tarball installs and runs as `scrappy` with no dependencies", (
   const manifest = JSON.parse(execFileSync("tar", ["-xzOf", tarball, "package/package.json"], { encoding: "utf8" }));
   assert.equal(manifest.name, "scrappy-redact");
   assert.equal(manifest.dependencies, undefined, "the bundle must be self-contained");
+  assert.equal(manifest.devDependencies, undefined, "build tools live in the workspace root, not on the npm page");
 
   const prefix = join(dir, "install");
   execFileSync("npm", ["install", "--prefix", prefix, "--no-audit", "--no-fund", "--offline", tarball], { stdio: "ignore" });
