@@ -32,14 +32,35 @@ test("repeated values share one placeholder", () => {
   assert.equal(result.text, "[EMAIL_1], [EMAIL_2], [EMAIL_1]");
 });
 
-test("overlaps: higher confidence wins, then the longer span, deterministically", () => {
-  const input = "token=eyJhbGc.eyJzdWI.sig";
-  const detectors = [literal("generic", "API_KEY", ["eyJhbGc.eyJzdWI.sig"], 0.6), literal("jwt", "JWT", ["eyJhbGc.eyJzdWI"], 0.95)];
-  assert.equal(sanitize(input, { detectors }).text, "token=[JWT_1].sig");
+test("overlaps between non-credentials: higher confidence wins, then the longer span, deterministically", () => {
+  const input = "ref=4111-2222-3333";
+  const detectors = [literal("long", "ACCOUNT_NUMBER", ["4111-2222-3333"], 0.6), literal("short", "PHONE", ["4111-2222"], 0.95)];
+  assert.equal(sanitize(input, { detectors }).text, "ref=[PHONE_1]-3333");
 
-  const tie = [literal("short", "API_KEY", ["eyJhbGc"]), literal("long", "JWT", ["eyJhbGc.eyJzdWI"])];
-  assert.equal(sanitize(input, { detectors: tie }).text, "token=[JWT_1].sig");
-  assert.equal(sanitize(input, { detectors: [...tie].reverse() }).text, "token=[JWT_1].sig");
+  const tie = [literal("short", "CUSTOM", ["4111"]), literal("long", "PHONE", ["4111-2222"])];
+  assert.equal(sanitize(input, { detectors: tie }).text, "ref=[PHONE_1]-3333");
+  assert.equal(sanitize(input, { detectors: [...tie].reverse() }).text, "ref=[PHONE_1]-3333");
+});
+
+test("overlaps between credentials: the longer span wins, so no credential text is left visible", () => {
+  const input = "token=eyJhbGc.eyJzdWI.sig.tail99";
+  const detectors = [literal("jwt", "JWT", ["eyJhbGc.eyJzdWI.sig"], 0.95), literal("pw", "PASSWORD", ["eyJhbGc.eyJzdWI.sig.tail99"], 0.8)];
+  assert.equal(sanitize(input, { detectors }).text, "token=[PASSWORD_1]");
+  // Equal spans: confidence picks the more specific type.
+  const same = [literal("bearer", "ACCESS_TOKEN", ["eyJhbGc.eyJzdWI.sig"], 0.85), literal("jwt", "JWT", ["eyJhbGc.eyJzdWI.sig"], 0.95)];
+  assert.equal(sanitize("Bearer eyJhbGc.eyJzdWI.sig", { detectors: same }).text, "Bearer [JWT_1]");
+});
+
+test("a credential span is never displaced by an overlapping non-credential span, whatever the confidence", () => {
+  const input = "password=10.0.0.1:hunter2 and 10.0.0.1";
+  const detectors = [literal("ip", "IP_ADDRESS", ["10.0.0.1"], 0.99), literal("pw", "PASSWORD", ["10.0.0.1:hunter2"], 0.5)];
+  // The IP inside the password must not split it; the standalone IP is still an IP.
+  assert.equal(sanitize(input, { detectors }).text, "password=[PASSWORD_1] and [IP_ADDRESS_1]");
+});
+
+test("between two non-credential types, confidence still decides", () => {
+  const detectors = [literal("phone", "PHONE", ["+1 415 555 0134"], 0.85), literal("acct", "ACCOUNT_NUMBER", ["415 555"], 0.9)];
+  assert.equal(sanitize("call +1 415 555 0134", { detectors }).text, "call +1 [ACCOUNT_NUMBER_1] 0134");
 });
 
 test("adjacent spans are both replaced against original offsets", () => {

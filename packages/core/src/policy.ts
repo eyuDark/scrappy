@@ -37,12 +37,18 @@ export function resolvePolicy(policy: SanitizePolicy = {}): ResolvedPolicy {
   return { enabledTypes: new Set(enabledTypes), minConfidence, allowlist: new Set(allowlist), maxInputLength };
 }
 
+/** Credentials outrank every other type in overlaps, so an IP or phone inside a password can't split it. */
+const CREDENTIAL_TYPES: ReadonlySet<SensitiveType> = new Set(["PASSWORD", "API_KEY", "ACCESS_TOKEN", "JWT", "PRIVATE_KEY", "SECRET"]);
+const tier = (c: AttributedMatch) => (CREDENTIAL_TYPES.has(c.type) ? 1 : 0);
+const length = (c: AttributedMatch) => c.end - c.start;
+
 const isHigh = (c: number) => c >= 0xd800 && c <= 0xdbff;
 const isLow = (c: number) => c >= 0xdc00 && c <= 0xdfff;
 
 /**
- * Drops invalid or disallowed spans, then picks non-overlapping winners deterministically:
- * higher confidence, then longer span, then earlier start, then detector id, then type.
+ * Drops invalid or disallowed spans, then picks non-overlapping winners deterministically. Credentials
+ * beat other types; between two credentials the longer span wins (so no credential text stays visible),
+ * otherwise higher confidence wins, then the longer span. Ties: earlier start, detector id, type.
  * Returns winners sorted by start.
  */
 export function resolveCandidates(input: string, candidates: readonly AttributedMatch[], policy: ResolvedPolicy): AttributedMatch[] {
@@ -60,8 +66,8 @@ export function resolveCandidates(input: string, candidates: readonly Attributed
 
   valid.sort(
     (a, b) =>
-      b.confidence - a.confidence ||
-      b.end - b.start - (a.end - a.start) ||
+      tier(b) - tier(a) ||
+      (tier(a) === 1 ? length(b) - length(a) || b.confidence - a.confidence : b.confidence - a.confidence || length(b) - length(a)) ||
       a.start - b.start ||
       compare(a.detector, b.detector) ||
       compare(a.type, b.type),

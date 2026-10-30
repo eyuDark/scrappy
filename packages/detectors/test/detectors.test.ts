@@ -192,6 +192,18 @@ test("ip addresses: IPv4 and IPv6, ports and brackets stay outside the span", ()
   }
 });
 
+test("passwords containing IP-, phone- or card-shaped text are redacted whole (security review, 0.3.1)", () => {
+  const withIp = (input: string) => sanitize(input, { detectors: [...defaultDetectors, ipAddressDetector] }).text;
+  assert.equal(withIp("password=10.0.0.1:hunter2Secret"), "password=[PASSWORD_1]");
+  assert.equal(withIp('DB_PASSWORD="192.168.0.1 MyS3cretPass"'), 'DB_PASSWORD="[PASSWORD_1]"');
+  assert.equal(withIp("pwd=Cafe::Babe!Xy9zQ"), "pwd=[PASSWORD_1]");
+  // Same leak existed with the default detectors (no IP masking):
+  assert.equal(run("password=+14155550134abcXYZ"), "password=[PASSWORD_1]");
+  assert.equal(run("password=4111111111111111xyz"), "password=[PASSWORD_1]");
+  // A standalone IP/phone next to the password is still its own finding.
+  assert.equal(withIp("password=hunter2 from 10.0.0.1"), "password=[PASSWORD_1] from [IP_ADDRESS_1]");
+});
+
 test("ip addresses are opt-in: not part of the default detectors", () => {
   assert.equal(run("from 196.188.12.44"), "from 196.188.12.44");
   assert.ok(!defaultDetectors.includes(ipAddressDetector));
