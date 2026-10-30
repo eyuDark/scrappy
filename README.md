@@ -19,6 +19,8 @@ npm install -g scrappy-redact
 
 The command is `scrappy`.
 
+`--clipboard` works on every system. Scrappy uses `pbpaste`/`pbcopy` on macOS, the Windows clipboard on Windows and WSL, and `wl-clipboard`, `xclip` or `xsel` on Linux, whichever is installed. If there is no clipboard tool (a fresh Linux install, SSH, a server), Scrappy asks you to paste into the terminal and press Ctrl-D. It then prints the result and copies it through your terminal where supported (OSC 52). For one-step copy and paste on Linux, install one tool: `sudo apt install wl-clipboard` (Wayland) or `sudo apt install xclip` (X11).
+
 ## Use
 
 **Clipboard, the everyday flow.** Copy the text, run this, then paste:
@@ -116,7 +118,7 @@ Scrappy reduces what you share. It does not guarantee anonymity.
 - Phone numbers written without `+` and without a nearby phone word (e.g. a bare `0911 234 567`) are not detected. If you need them, add a custom detector.
 - Short or word-like secrets (e.g. `Summer2024!` as a bare value, not after `password=`) can slip through. Check the output before you paste anything highly sensitive.
 - Combinations of harmless-looking details can still identify a person.
-- Clipboard support uses `pbcopy`/`pbpaste` on macOS and `wl-clipboard` or `xclip` on Linux. Windows is untested. Elsewhere, set `SCRAPPY_PASTE_CMD` and `SCRAPPY_COPY_CMD`.
+- The Windows and WSL clipboard paths are tested with stand-ins, not yet on a real Windows machine. The paste-into-terminal fallback works everywhere. You can also point Scrappy at any clipboard command with `SCRAPPY_PASTE_CMD` and `SCRAPPY_COPY_CMD`.
 
 ## License
 

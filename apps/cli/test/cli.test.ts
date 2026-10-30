@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -134,6 +134,59 @@ test("config usage errors exit 2", () => {
   for (const args of [["config", "--enable-ip-masking"], ["config", "--global"], ["config", "--global", "--enable-ip-masking", "--disable-ip-masking"]]) {
     assert.equal(cli(args).status, 2, args.join(" "));
   }
+});
+
+// No clipboard tool at all (like a fresh Linux box): an empty PATH, no SCRAPPY_*_CMD overrides.
+const NO_TOOLS = join(dir, "empty-path");
+mkdirSync(NO_TOOLS, { recursive: true });
+const noToolsEnv = (): NodeJS.ProcessEnv => {
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: NO_TOOLS, XDG_CONFIG_HOME: CONFIG_HOME };
+  delete env.SCRAPPY_PASTE_CMD;
+  delete env.SCRAPPY_COPY_CMD;
+  return env;
+};
+
+test("--clipboard with no clipboard tool: asks for a paste, prints the sanitized result", () => {
+  const r = spawnSync(process.execPath, ["--conditions=source", "--no-warnings", MAIN, "sanitize", "--clipboard"], {
+    input: "mail john@example.com, password=hunter2\u0004",
+    encoding: "utf8",
+    env: noToolsEnv(),
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "mail [EMAIL_1], password=[PASSWORD_1]\n");
+  assert.match(r.stderr, /no clipboard tool found/);
+  assert.match(r.stderr, /Ctrl-D/);
+  assert.match(r.stderr, /sanitized 2 values/);
+  assert.ok(!/john|hunter2/.test(r.stderr), "originals never reach stderr");
+});
+
+test("session with no clipboard tool: paste + Ctrl-D for both sanitize and restore", async () => {
+  const child = spawn(process.execPath, ["--conditions=source", "--no-warnings", MAIN, "session"], { env: noToolsEnv() });
+  let stderr = "";
+  let stdout = "";
+  child.stderr.setEncoding("utf8").on("data", (d: string) => (stderr += d));
+  child.stdout.setEncoding("utf8").on("data", (d: string) => (stdout += d));
+  const closed = once(child, "close");
+  const waitFor = async (pattern: RegExp) => {
+    while (!pattern.test(stderr)) {
+      const exited = await Promise.race([once(child.stderr, "data").then(() => false), closed.then(() => true)]);
+      if (exited && !pattern.test(stderr)) assert.fail(`exited before ${pattern}; stderr: ${stderr}`);
+    }
+  };
+
+  child.stdin.write("s");
+  await waitFor(/Ctrl-D/);
+  child.stdin.write("Refund john@example.com\u0004");
+  await waitFor(/sanitized 1 value/);
+  assert.match(stdout, /Refund \[EMAIL_1\]/);
+
+  child.stdin.write("rDone: refunded [EMAIL_1]\u0004");
+  await waitFor(/restored 1 value/);
+  assert.match(stdout, /Done: refunded john@example.com/);
+
+  child.stdin.write("q");
+  assert.equal((await closed)[0], 0);
+  assert.ok(!/john/.test(stderr), "originals never reach stderr");
 });
 
 test("--version prints the package version", () => {

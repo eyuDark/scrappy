@@ -15,9 +15,10 @@ import {
   type SensitiveType,
 } from "@scrappy/sdk";
 import { systemClipboard } from "./clipboard.ts";
+import { inputReader, terminalFallback } from "./terminal.ts";
 import { CliError } from "./errors.ts";
 import { readSettings, settingsPath, writeSettings } from "./settings.ts";
-import { runSession, summarize } from "./session.ts";
+import { destination, runSession, summarize } from "./session.ts";
 
 const HELP = `scrappy: strip secrets and personal data from text before it goes to an AI tool.
 Runs locally; nothing leaves your machine.
@@ -41,7 +42,8 @@ Commands
 
 Options
   -i, --input <file>        Read a file instead of stdin. The file is never modified.
-      --clipboard           Read the clipboard (macOS, Linux, or SCRAPPY_PASTE_CMD/SCRAPPY_COPY_CMD).
+      --clipboard           Read the clipboard. Works everywhere: uses pbpaste, wl-clipboard, xclip, xsel or
+                            the Windows clipboard; with none of them, asks you to paste into the terminal.
   -f, --format <fmt>        "text" (default) or "json": sanitizes JSON values and keys, keeps structure.
   -c, --config <file>       JSON config with "policy" and "customDetectors" (see the README).
       --ip                  Also mask IPv4/IPv6 addresses for this run (off by default).
@@ -111,12 +113,14 @@ async function main(argv: string[]): Promise<number> {
     : undefined;
   if (usageProblem) return usageError(usageProblem);
 
+  // Clipboard modes share one stdin reader: it feeds session keys and the paste-into-terminal fallback.
+  const reader = values.clipboard || command === "session" ? inputReader() : undefined;
   try {
     const options = values.config ? await loadConfig(values.config) : {};
     if (values.ip || (await readSettings()).ipMasking) options.detectors = [...(options.detectors ?? defaultDetectors), ipAddressDetector];
     const maxBytes = maxBytesFor(options);
-    if (command === "session") return await runSession(options, systemClipboard(), maxBytes);
-    const clipboard = values.clipboard ? systemClipboard() : undefined;
+    const clipboard = reader && systemClipboard({ fallback: terminalFallback(reader) });
+    if (command === "session") return await runSession(options, clipboard!, reader!, maxBytes);
     const raw = clipboard ? await clipboard.read(maxBytes) : await readInput(values.input, maxBytes);
     let result;
     let text;
@@ -137,14 +141,16 @@ async function main(argv: string[]): Promise<number> {
     if (command === "inspect") process.stdout.write(JSON.stringify({ findings: result.findings, stats: result.stats }, null, 2) + "\n");
     else if (!clipboard) process.stdout.write(text);
     else {
-      await clipboard.write(text);
-      process.stderr.write(`scrappy: sanitized ${summarize(result.findings)} → clipboard\n`);
+      const via = await clipboard.write(text);
+      process.stderr.write(`scrappy: sanitized ${summarize(result.findings)} ${destination(via)}\n`);
     }
     return 0;
   } catch (error) {
     const safe = error instanceof ScrappyError || error instanceof CliError;
     process.stderr.write(`scrappy: ${safe ? error.message : "internal error"}\n`);
     return 1;
+  } finally {
+    reader?.close();
   }
 }
 
