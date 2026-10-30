@@ -1,0 +1,52 @@
+name: Release
+
+# Push a tag like v0.3.1 to publish that version to npm with provenance.
+# Run it manually ("Run workflow") for a dry run that does everything except upload.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release
+      id-token: write # npm trusted publishing (OIDC): no npm token is stored anywhere
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@latest
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+      - name: Check the tag matches the package version
+        if: github.event_name == 'push'
+        run: |
+          version=$(node -p "require('./apps/cli/package.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package version $version"
+            exit 1
+          fi
+
+      - name: Pack
+        run: pnpm --filter scrappy-redact pack --pack-destination "$RUNNER_TEMP/release"
+
+      - name: Publish to npm
+        run: npm publish "$RUNNER_TEMP"/release/*.tgz --access public ${{ github.event_name == 'push' && '--provenance' || '--dry-run' }}
+
+      - name: Create the GitHub Release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-from-tag --verify-tag
