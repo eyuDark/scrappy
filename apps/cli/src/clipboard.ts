@@ -1,12 +1,10 @@
 import { spawn } from "node:child_process";
+import { CliError } from "./errors.ts";
 
 export interface Clipboard {
   read(maxBytes: number): Promise<string>;
   write(text: string): Promise<void>;
 }
-
-/** Errors whose message is safe to print: it never contains input text. */
-export class CliError extends Error {}
 
 type Command = { file: string; args: string[]; shell?: boolean };
 

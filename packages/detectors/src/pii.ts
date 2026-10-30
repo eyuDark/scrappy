@@ -1,3 +1,4 @@
+import { isIPv4, isIPv6 } from "node:net";
 import type { CandidateMatch, Detector } from "@scrappy/core";
 import { createPatternDetector } from "./pattern.ts";
 
@@ -42,6 +43,28 @@ export const phoneDetector: Detector = {
       const digits = input.slice(span[0], span[1]).replace(/\D/g, "").length;
       if (digits < (intl ? 8 : 7) || digits > 15) continue;
       out.push({ type: "PHONE", start: span[0], end: span[1], confidence: intl ? 0.85 : 0.8 });
+    }
+    return out;
+  },
+};
+
+// Candidates only; node:net decides what is a real address (so 999.1.1.1, times and MACs are rejected).
+const IP =
+  /(?<![\w.])(?<v4>(?:\d{1,3}\.){3}\d{1,3})(?!\.?\d|\w)|(?<![\w:.])(?<v6>(?:[0-9A-Fa-f]{1,4}|:)(?::[0-9A-Fa-f]{0,4}){1,7}(?:(?:\.\d{1,3}){3})?(?:%[\w.]+)?)/dg;
+
+/** IPv4 and IPv6 addresses. Opt-in: not in `defaultDetectors`. Ports and brackets stay outside the span. */
+export const ipAddressDetector: Detector = {
+  id: "ip-address",
+  supportedTypes: ["IP_ADDRESS"],
+  detect(input) {
+    const out: CandidateMatch[] = [];
+    for (const m of input.matchAll(IP)) {
+      const v4 = m.groups?.v4 !== undefined;
+      const span = v4 ? m.indices?.groups?.v4 : m.indices?.groups?.v6;
+      if (!span) continue;
+      const value = input.slice(span[0], span[1]);
+      if (!(v4 ? isIPv4(value) : isIPv6(value))) continue;
+      out.push({ type: "IP_ADDRESS", start: span[0], end: span[1], confidence: 0.85 });
     }
     return out;
   },

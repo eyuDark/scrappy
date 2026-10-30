@@ -1,6 +1,6 @@
 {
   "name": "scrappy-redact",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Strip secrets and personal data from text before it goes to an AI tool. Runs locally; nothing leaves your machine.",
   "keywords": [
     "redact",

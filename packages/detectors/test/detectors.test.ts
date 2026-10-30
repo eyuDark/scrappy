@@ -7,6 +7,7 @@ import {
   createPatternDetector,
   defaultDetectors,
   emailDetector,
+  ipAddressDetector,
   jwtDetector,
   passwordAssignmentDetector,
   paymentCardDetector,
@@ -165,6 +166,37 @@ test("unknown tokens: catches at least 95% of random base62 tokens", (t) => {
   t.diagnostic(`recall on random base62: ${caught}/200`);
 });
 
+test("ip addresses: IPv4 and IPv6, ports and brackets stay outside the span", () => {
+  const cases: [string, string][] = [
+    ["client_ip=196.188.12.44 ok", "196.188.12.44"],
+    ["host=10.0.4.17:8080", "10.0.4.17"],
+    ["loopback 127.0.0.1.", "127.0.0.1"],
+    ["v6 2001:db8:85a3::8a2e:370:7334 up", "2001:db8:85a3::8a2e:370:7334"],
+    ["bind [::1]:3000", "::1"],
+    ["full 2001:0db8:0000:0000:0000:ff00:0042:8329", "2001:0db8:0000:0000:0000:ff00:0042:8329"],
+    ["mapped ::ffff:192.0.2.128 end", "::ffff:192.0.2.128"],
+    ["zone fe80::1%eth0 link", "fe80::1%eth0"],
+  ];
+  for (const [input, ip] of cases) assert.deepEqual(matches(ipAddressDetector, input), [ip], input);
+  for (const negative of [
+    "release v1.42.0.3",
+    "build 1.2.3.4.5",
+    "bad 999.1.1.1",
+    "at 12:30:45 today",
+    "mac aa:bb:cc:dd:ee:ff",
+    "words dead:beef:cafe",
+    "price 3.14",
+    "ratio 1:2",
+  ]) {
+    assert.deepEqual(matches(ipAddressDetector, negative), [], negative);
+  }
+});
+
+test("ip addresses are opt-in: not part of the default detectors", () => {
+  assert.equal(run("from 196.188.12.44"), "from 196.188.12.44");
+  assert.ok(!defaultDetectors.includes(ipAddressDetector));
+});
+
 test("custom pattern detector redacts the `value` group and runs validate", () => {
   const account = createPatternDetector({ id: "account", type: "ACCOUNT_NUMBER", pattern: /account (?<value>\d{6})\b/i });
   assert.deepEqual(matches(account, "Account 100284 and account 12"), ["100284"]);
@@ -195,10 +227,13 @@ test("adversarial: 1 MB pathological inputs finish quickly", () => {
     oneHugeToken: "aB3".repeat(n / 3),
     manyShortTokens: "aB3dE6gH9jK2mN5pQ8sT1vW4 ".repeat(n / 25),
     slashRuns: "aB3/".repeat(n / 4),
+    dottedNumbers: "1.".repeat(n / 2),
+    colonHex: "a:".repeat(n / 2),
+    doubleColons: "::".repeat(n / 2),
   };
   for (const [name, input] of Object.entries(inputs)) {
     const started = performance.now();
-    sanitize(input, { detectors: defaultDetectors });
+    sanitize(input, { detectors: [...defaultDetectors, ipAddressDetector] });
     const ms = performance.now() - started;
     assert.ok(ms < 2000, `${name} took ${Math.round(ms)}ms`);
   }

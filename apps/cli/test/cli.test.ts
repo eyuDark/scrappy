@@ -11,8 +11,10 @@ const dir = mkdtempSync(join(tmpdir(), "scrappy-cli-"));
 const CLIP = join(dir, "clipboard.txt");
 // A file-backed fake clipboard at the system boundary; the real OS clipboard has its own test.
 const fakeClipboard = { SCRAPPY_PASTE_CMD: `cat '${CLIP}'`, SCRAPPY_COPY_CMD: `cat > '${CLIP}'` };
+// Isolated settings dir, so the developer's own ~/.config/scrappy never changes test results.
+const CONFIG_HOME = join(dir, "config-home");
 const cli = (args: string[], input = "") =>
-  spawnSync(process.execPath, ["--conditions=source", "--no-warnings", MAIN, ...args], { input, encoding: "utf8", env: { ...process.env, ...fakeClipboard } });
+  spawnSync(process.execPath, ["--conditions=source", "--no-warnings", MAIN, ...args], { input, encoding: "utf8", env: { ...process.env, ...fakeClipboard, XDG_CONFIG_HOME: CONFIG_HOME } });
 
 test("sanitize: stdin to stdout, byte-for-byte apart from placeholders", () => {
   const r = cli(["sanitize"], "user=john@example.com\npassword=hunter2\n");
@@ -69,7 +71,7 @@ test("inspect --clipboard reads the clipboard and leaves it untouched", () => {
 
 test("session: sanitize clipboard, paste AI reply back, restore originals, quit", async () => {
   writeFileSync(CLIP, "Refund john@example.com, password=hunter2");
-  const child = spawn(process.execPath, ["--conditions=source", "--no-warnings", MAIN, "session"], { env: { ...process.env, ...fakeClipboard } });
+  const child = spawn(process.execPath, ["--conditions=source", "--no-warnings", MAIN, "session"], { env: { ...process.env, ...fakeClipboard, XDG_CONFIG_HOME: CONFIG_HOME } });
   let stderr = "";
   child.stderr.setEncoding("utf8").on("data", (d: string) => (stderr += d));
   const closed = once(child, "close");
@@ -106,6 +108,34 @@ test("real macOS clipboard via pbcopy/pbpaste", { skip: process.platform !== "da
   assert.equal(spawnSync("pbpaste", { encoding: "utf8" }).stdout, "mail [EMAIL_1] ✓");
 });
 
+test("IPs are masked only with --ip", () => {
+  const input = "client 196.188.12.44 via 10.0.4.17:8080 and [::1]:3000";
+  assert.equal(cli(["sanitize"], input).stdout, input);
+  assert.equal(cli(["sanitize", "--ip"], input).stdout, "client [IP_ADDRESS_1] via [IP_ADDRESS_2]:8080 and [[IP_ADDRESS_3]]:3000");
+  assert.equal(JSON.parse(cli(["inspect", "--ip"], input).stdout).stats.findingCount, 3);
+});
+
+test("config --global --enable-ip-masking persists until disabled", () => {
+  const input = "client 196.188.12.44";
+  assert.match(cli(["config"]).stdout, /ip-masking: off/);
+
+  const on = cli(["config", "--global", "--enable-ip-masking"]);
+  assert.equal(on.status, 0, on.stderr);
+  assert.match(on.stdout, /ip-masking: on/);
+  assert.deepEqual(JSON.parse(readFileSync(join(CONFIG_HOME, "scrappy", "config.json"), "utf8")), { ipMasking: true });
+  assert.equal(cli(["sanitize"], input).stdout, "client [IP_ADDRESS_1]");
+  assert.match(cli(["config"]).stdout, /ip-masking: on/);
+
+  assert.match(cli(["config", "--global", "--disable-ip-masking"]).stdout, /ip-masking: off/);
+  assert.equal(cli(["sanitize"], input).stdout, input);
+});
+
+test("config usage errors exit 2", () => {
+  for (const args of [["config", "--enable-ip-masking"], ["config", "--global"], ["config", "--global", "--enable-ip-masking", "--disable-ip-masking"]]) {
+    assert.equal(cli(args).status, 2, args.join(" "));
+  }
+});
+
 test("--version prints the package version", () => {
   const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   for (const flag of ["--version", "-v"]) {
@@ -115,8 +145,20 @@ test("--version prints the package version", () => {
   }
 });
 
+test("help lists every command and option: `scrappy help`, --help, -h, and bare `scrappy`", () => {
+  const pages = [["help"], ["--help"], ["-h"], []].map((args) => cli(args));
+  for (const r of pages) {
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, pages[0]!.stdout, "every way to ask for help prints the same page");
+  }
+  const page = pages[0]!.stdout;
+  for (const item of ["sanitize", "inspect", "session", "config", "help", "--input", "--clipboard", "--format", "--config", "--ip", "--global", "--enable-ip-masking", "--disable-ip-masking", "--version", "--help", "Examples"]) {
+    assert.ok(page.includes(item), `help is missing ${item}`);
+  }
+});
+
 test("invalid usage exits 2", () => {
-  for (const args of [[], ["explode"], ["sanitize", "extra"], ["sanitize", "--format", "xml"], ["sanitize", "--nope"], ["sanitize", "--clipboard", "-i", "x"], ["session", "-i", "x"], ["session", "--format", "json"]]) {
+  for (const args of [["explode"], ["sanitize", "extra"], ["sanitize", "--format", "xml"], ["sanitize", "--nope"], ["sanitize", "--clipboard", "-i", "x"], ["session", "-i", "x"], ["session", "--format", "json"]]) {
     const r = cli(args);
     assert.equal(r.status, 2, args.join(" "));
     assert.equal(r.stdout, "");

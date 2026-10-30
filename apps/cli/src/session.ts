@@ -1,5 +1,6 @@
 import { ScrappyError, createSession, type Finding, type SdkOptions } from "@scrappy/sdk";
-import { CliError, type Clipboard } from "./clipboard.ts";
+import type { Clipboard } from "./clipboard.ts";
+import { CliError } from "./errors.ts";
 
 const HELP = `scrappy session: original values stay in memory only and are gone when you quit.
   s  sanitize the clipboard in place (then paste it into your AI tool)

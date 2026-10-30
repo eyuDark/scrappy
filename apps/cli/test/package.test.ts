@@ -25,8 +25,11 @@ test("the packed tarball installs and runs as `scrappy` with no dependencies", (
   const bin = join(prefix, "node_modules", ".bin", "scrappy");
 
   assert.equal(execFileSync(bin, ["--version"], { encoding: "utf8" }), `${manifest.version}\n`);
-  const r = spawnSync(bin, ["sanitize"], { input: "ping ops@corp.io", encoding: "utf8" });
+  const env = { ...process.env, XDG_CONFIG_HOME: join(dir, "config-home") };
+  const r = spawnSync(bin, ["sanitize"], { input: "ping ops@corp.io from 10.0.0.7", encoding: "utf8", env });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, "ping [EMAIL_1]");
+  assert.equal(r.stdout, "ping [EMAIL_1] from 10.0.0.7");
+  assert.equal(spawnSync(bin, ["sanitize", "--ip"], { input: "from 10.0.0.7", encoding: "utf8", env }).stdout, "from [IP_ADDRESS_1]");
+  assert.match(execFileSync(bin, ["help"], { encoding: "utf8", env }), /scrappy config +\[--global --enable-ip-masking/);
 });
 

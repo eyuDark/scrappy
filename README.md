@@ -46,6 +46,28 @@ scrappy sanitize --input request.json --format json   # keeps the JSON structure
 scrappy inspect --input app.log                       # what was found, never the values
 ```
 
+**IP addresses (opt-in).** IPs are left alone by default because they're often useful debugging context. Mask them for one run:
+
+```sh
+scrappy sanitize --ip -i access.log      # 196.188.12.44 → [IP_ADDRESS_1], 10.0.4.17:8080 → [IP_ADDRESS_2]:8080
+```
+
+Or turn masking on for every run. The setting is saved in `~/.config/scrappy/config.json`; only the preference is stored, never your text:
+
+```sh
+scrappy config --global --enable-ip-masking    # always mask IPs
+scrappy config                                 # show current settings
+scrappy config --global --disable-ip-masking   # back to the default
+```
+
+IPv4 and IPv6 are both covered, including `::1`, `fe80::1%eth0` and `::ffff:192.0.2.128`. Ports and brackets stay visible. Version numbers, times like `12:30:45`, MAC addresses and invalid values like `999.1.1.1` are not touched.
+
+**All commands and options:**
+
+```sh
+scrappy help        # or scrappy --help, or just scrappy
+```
+
 Stdout carries only sanitized content. Exit codes are `0` for success, `1` for an input, config or processing error, and `2` for invalid usage. Your input file is never modified.
 
 ## What it detects
@@ -61,6 +83,7 @@ Stdout carries only sanitized content. Exit codes are `0` for success, `1` for a
 | `PAYMENT_CARD` | Visa, Mastercard, Amex, Discover and more; checked with the card checksum (Luhn) |
 | `PHONE` | International numbers (`+251 911 234 567`), or any number right after a word like phone, call, mobile or WhatsApp |
 | `SECRET` | Random-looking tokens with no known prefix, e.g. `X-Internal-Auth: Hq3Zm8Wv1Ks6…` |
+| `IP_ADDRESS` | IPv4 and IPv6. **Only with `--ip` or `scrappy config --global --enable-ip-masking`** |
 
 `SECRET` is a best guess. It skips hashes, UUIDs and code identifiers, but it can flag base64 data, such as certificate fingerprints. To turn it off, list the types you want to keep in `enabledTypes` and leave out `SECRET`:
 

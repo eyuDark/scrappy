@@ -7,29 +7,64 @@ import {
   ScrappyError,
   createPatternDetector,
   defaultDetectors,
+  ipAddressDetector,
   sanitize,
   sanitizeJson,
   type Detector,
   type SdkOptions,
   type SensitiveType,
 } from "@scrappy/sdk";
-import { CliError, systemClipboard } from "./clipboard.ts";
+import { systemClipboard } from "./clipboard.ts";
+import { CliError } from "./errors.ts";
+import { readSettings, settingsPath, writeSettings } from "./settings.ts";
 import { runSession, summarize } from "./session.ts";
 
-const USAGE = `Usage: scrappy <sanitize|inspect> [--input <file> | --clipboard] [--format text|json] [--config <file>]
-       scrappy session [--config <file>]
+const HELP = `scrappy: strip secrets and personal data from text before it goes to an AI tool.
+Runs locally; nothing leaves your machine.
 
-  sanitize   Print the sanitized input to stdout.
-  inspect    Print findings (types, offsets, placeholders; never values) as JSON.
-  session    Interactive: sanitize the clipboard, then restore originals in the AI's reply.
-             Mappings stay in memory and are discarded on quit.
+Usage
+  scrappy sanitize [--input <file> | --clipboard] [--format text|json] [--config <file>] [--ip]
+  scrappy inspect  [--input <file> | --clipboard] [--format text|json] [--config <file>] [--ip]
+  scrappy session  [--config <file>] [--ip]
+  scrappy config   [--global --enable-ip-masking | --global --disable-ip-masking]
+  scrappy help
 
-  -i, --input <file>   Read from a file instead of stdin. The file is never modified.
-      --clipboard      Read the clipboard; "sanitize" writes the result back to the clipboard.
-  -f, --format <fmt>   "text" (default) or "json" (sanitizes values and keys, keeps structure).
-  -c, --config <file>  JSON config: { "policy": {...}, "customDetectors": [{ "id", "type", "pattern", "flags"?, "confidence"? }] }
-  -v, --version        Print the version.
+Commands
+  sanitize   Replace sensitive values with placeholders like [EMAIL_1]; prints the result.
+             With --clipboard, the result goes back to the clipboard instead.
+  inspect    Report what was found (types, offsets, placeholders; never the values) as JSON.
+  session    Interactive clipboard round trip. Keys: s = sanitize the clipboard,
+             r = restore originals in the AI's reply, q = quit. Originals stay in memory
+             only and are discarded when you quit.
+  config     Show saved settings, or change them with --global.
+  help       Show this page.
+
+Options
+  -i, --input <file>        Read a file instead of stdin. The file is never modified.
+      --clipboard           Read the clipboard (macOS, Linux, or SCRAPPY_PASTE_CMD/SCRAPPY_COPY_CMD).
+  -f, --format <fmt>        "text" (default) or "json": sanitizes JSON values and keys, keeps structure.
+  -c, --config <file>       JSON config with "policy" and "customDetectors" (see the README).
+      --ip                  Also mask IPv4/IPv6 addresses for this run (off by default).
+  -g, --global              With config: change a saved setting.
+      --enable-ip-masking   With config --global: always mask IP addresses.
+      --disable-ip-masking  With config --global: stop masking IP addresses by default.
+  -v, --version             Print the version.
+  -h, --help                Show this page.
+
+Examples
+  scrappy sanitize --clipboard                 copy text, run this, then paste into your AI tool
+  cat app.log | scrappy sanitize > safe.log    clean a log file
+  scrappy inspect -i app.log                   see what would be replaced
+  scrappy sanitize --ip -i access.log          also mask IP addresses
+  scrappy config --global --enable-ip-masking  mask IPs in every run from now on
+
+Exit codes: 0 success, 1 input/config/processing error, 2 invalid usage.
 `;
+
+const usageError = (problem: string) => {
+  process.stderr.write(`scrappy: ${problem}\nRun \`scrappy help\` to see all commands and options.\n`);
+  return 2;
+};
 
 async function main(argv: string[]): Promise<number> {
   let args;
@@ -40,6 +75,10 @@ async function main(argv: string[]): Promise<number> {
       options: {
         input: { type: "string", short: "i" },
         clipboard: { type: "boolean" },
+        ip: { type: "boolean" },
+        global: { type: "boolean", short: "g" },
+        "enable-ip-masking": { type: "boolean" },
+        "disable-ip-masking": { type: "boolean" },
         format: { type: "string", short: "f", default: "text" },
         config: { type: "string", short: "c" },
         help: { type: "boolean", short: "h" },
@@ -47,35 +86,34 @@ async function main(argv: string[]): Promise<number> {
       },
     });
   } catch (error) {
-    process.stderr.write(`scrappy: ${(error as Error).message}\n\n${USAGE}`);
-    return 2;
+    return usageError((error as Error).message);
   }
   const { values, positionals } = args;
-  if (values.help) {
-    process.stdout.write(USAGE);
-    return 0;
-  }
   if (values.version) {
     // src/ and the bundled dist/ both sit one level below package.json.
     process.stdout.write(`${JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version}\n`);
     return 0;
   }
   const [command, ...extra] = positionals;
+  if (values.help || command === "help" || command === undefined) {
+    process.stdout.write(HELP);
+    return 0;
+  }
+  if (command === "config") return await configCommand(values, extra);
   const usageProblem =
     command !== "sanitize" && command !== "inspect" && command !== "session" ? "expected a command: sanitize, inspect or session"
     : extra.length > 0 ? `unexpected argument: ${extra[0]}`
-    : command === "session" && (values.input !== undefined || values.clipboard || values.format !== "text") ? "session takes only --config"
+    : values.global || values["enable-ip-masking"] || values["disable-ip-masking"] ? "--global and --enable/--disable-ip-masking belong to `scrappy config`"
+    : command === "session" && (values.input !== undefined || values.clipboard || values.format !== "text") ? "session takes only --config and --ip"
     : values.format !== "text" && values.format !== "json" ? "--format must be text or json"
     : values.input !== undefined && values.clipboard ? "use either --input or --clipboard, not both"
     : command !== "session" && values.input === undefined && !values.clipboard && process.stdin.isTTY ? "no input: pipe text to stdin, or pass --input or --clipboard"
     : undefined;
-  if (usageProblem) {
-    process.stderr.write(`scrappy: ${usageProblem}\n\n${USAGE}`);
-    return 2;
-  }
+  if (usageProblem) return usageError(usageProblem);
 
   try {
     const options = values.config ? await loadConfig(values.config) : {};
+    if (values.ip || (await readSettings()).ipMasking) options.detectors = [...(options.detectors ?? defaultDetectors), ipAddressDetector];
     const maxBytes = maxBytesFor(options);
     if (command === "session") return await runSession(options, systemClipboard(), maxBytes);
     const clipboard = values.clipboard ? systemClipboard() : undefined;
@@ -106,6 +144,31 @@ async function main(argv: string[]): Promise<number> {
   } catch (error) {
     const safe = error instanceof ScrappyError || error instanceof CliError;
     process.stderr.write(`scrappy: ${safe ? error.message : "internal error"}\n`);
+    return 1;
+  }
+}
+
+/** `scrappy config` shows settings; `--global --enable-ip-masking` / `--disable-ip-masking` saves one. */
+async function configCommand(values: { global?: boolean; "enable-ip-masking"?: boolean; "disable-ip-masking"?: boolean; [k: string]: unknown }, extra: string[]): Promise<number> {
+  const enable = values["enable-ip-masking"] === true;
+  const disable = values["disable-ip-masking"] === true;
+  const others = Object.keys(values).filter((k) => !["global", "enable-ip-masking", "disable-ip-masking", "format"].includes(k));
+  const problem =
+    extra.length > 0 ? `unexpected argument: ${extra[0]}`
+    : others.length > 0 ? `config does not take --${others[0]}`
+    : enable && disable ? "use either --enable-ip-masking or --disable-ip-masking, not both"
+    : (enable || disable) && !values.global ? "settings are global: add --global"
+    : values.global && !enable && !disable ? "--global needs --enable-ip-masking or --disable-ip-masking"
+    : undefined;
+  if (problem) return usageError(problem);
+  try {
+    const path = settingsPath();
+    const settings = await readSettings(path);
+    if (enable || disable) await writeSettings({ ...settings, ipMasking: enable }, path);
+    process.stdout.write(`ip-masking: ${enable || (!disable && settings.ipMasking) ? "on" : "off"}   (${path})\n`);
+    return 0;
+  } catch (error) {
+    process.stderr.write(`scrappy: ${error instanceof CliError ? error.message : "cannot save settings"}\n`);
     return 1;
   }
 }
