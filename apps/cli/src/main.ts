@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import {
@@ -17,7 +18,8 @@ import {
 import { systemClipboard } from "./clipboard.ts";
 import { inputReader, terminalFallback } from "./terminal.ts";
 import { CliError } from "./errors.ts";
-import { readSettings, settingsPath, writeSettings } from "./settings.ts";
+import { readSettings, settingsPath, writeSettings, type Settings } from "./settings.ts";
+import { checkForUpdate, npmLatest } from "./update.ts";
 import { destination, runSession, summarize } from "./session.ts";
 
 const HELP = `scrappy: strip secrets and personal data from text before it goes to an AI tool.
@@ -27,7 +29,7 @@ Usage
   scrappy sanitize [--input <file> | --clipboard] [--format text|json] [--config <file>] [--ip]
   scrappy inspect  [--input <file> | --clipboard] [--format text|json] [--config <file>] [--ip]
   scrappy session  [--config <file>] [--ip]
-  scrappy config   [--global --enable-ip-masking | --global --disable-ip-masking]
+  scrappy config   [--global --enable-ip-masking | --disable-ip-masking | --enable-update-check | --disable-update-check]
   scrappy help
 
 Commands
@@ -50,6 +52,9 @@ Options
   -g, --global              With config: change a saved setting.
       --enable-ip-masking   With config --global: always mask IP addresses.
       --disable-ip-masking  With config --global: stop masking IP addresses by default.
+      --enable-update-check With config --global: check npm once a day for a newer version (default).
+      --disable-update-check
+                            With config --global: never check. SCRAPPY_NO_UPDATE_CHECK=1 also turns it off.
   -v, --version             Print the version.
   -h, --help                Show this page.
 
@@ -60,8 +65,32 @@ Examples
   scrappy sanitize --ip -i access.log          also mask IP addresses
   scrappy config --global --enable-ip-masking  mask IPs in every run from now on
 
+Update notice: once a day, on a terminal only, scrappy asks the npm registry for the latest version
+number (nothing about your text is sent) and tells you when a newer one exists.
+
 Exit codes: 0 success, 1 input/config/processing error, 2 invalid usage.
 `;
+
+// src/ and the bundled dist/ both sit one level below package.json.
+const PKG = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { name: string; version: string };
+
+/**
+ * Starts the daily update check (terminal only, never in CI or when turned off) and returns a function
+ * that prints the notice once the command is done. Only the package's public version number is fetched.
+ */
+function startUpdateCheck(settings: Settings): () => Promise<void> {
+  const env = process.env;
+  if (!process.stdout.isTTY || !process.stderr.isTTY || env.CI || env.SCRAPPY_NO_UPDATE_CHECK || !settings.updateCheck) return async () => {};
+  const pending = checkForUpdate({
+    current: PKG.version,
+    cachePath: join(dirname(settingsPath()), "update-check.json"),
+    fetchLatest: npmLatest(PKG.name, env.SCRAPPY_REGISTRY_URL),
+  });
+  return async () => {
+    const latest = await pending;
+    if (latest) process.stderr.write(`\nscrappy ${latest} is available (you have ${PKG.version}). Update: npm i -g ${PKG.name}@latest\n`);
+  };
+}
 
 const usageError = (problem: string) => {
   process.stderr.write(`scrappy: ${problem}\nRun \`scrappy help\` to see all commands and options.\n`);
@@ -81,6 +110,8 @@ async function main(argv: string[]): Promise<number> {
         global: { type: "boolean", short: "g" },
         "enable-ip-masking": { type: "boolean" },
         "disable-ip-masking": { type: "boolean" },
+        "enable-update-check": { type: "boolean" },
+        "disable-update-check": { type: "boolean" },
         format: { type: "string", short: "f", default: "text" },
         config: { type: "string", short: "c" },
         help: { type: "boolean", short: "h" },
@@ -92,8 +123,7 @@ async function main(argv: string[]): Promise<number> {
   }
   const { values, positionals } = args;
   if (values.version) {
-    // src/ and the bundled dist/ both sit one level below package.json.
-    process.stdout.write(`${JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version}\n`);
+    process.stdout.write(`${PKG.version}\n`);
     return 0;
   }
   const [command, ...extra] = positionals;
@@ -105,7 +135,8 @@ async function main(argv: string[]): Promise<number> {
   const usageProblem =
     command !== "sanitize" && command !== "inspect" && command !== "session" ? "expected a command: sanitize, inspect or session"
     : extra.length > 0 ? `unexpected argument: ${extra[0]}`
-    : values.global || values["enable-ip-masking"] || values["disable-ip-masking"] ? "--global and --enable/--disable-ip-masking belong to `scrappy config`"
+    : values.global || values["enable-ip-masking"] || values["disable-ip-masking"] || values["enable-update-check"] || values["disable-update-check"]
+      ? "--global and the --enable/--disable settings belong to `scrappy config`"
     : command === "session" && (values.input !== undefined || values.clipboard || values.format !== "text") ? "session takes only --config and --ip"
     : values.format !== "text" && values.format !== "json" ? "--format must be text or json"
     : values.input !== undefined && values.clipboard ? "use either --input or --clipboard, not both"
@@ -115,12 +146,19 @@ async function main(argv: string[]): Promise<number> {
 
   // Clipboard modes share one stdin reader: it feeds session keys and the paste-into-terminal fallback.
   const reader = values.clipboard || command === "session" ? inputReader() : undefined;
+  let showUpdate = async () => {};
   try {
+    const settings = await readSettings();
+    showUpdate = startUpdateCheck(settings);
     const options = values.config ? await loadConfig(values.config) : {};
-    if (values.ip || (await readSettings()).ipMasking) options.detectors = [...(options.detectors ?? defaultDetectors), ipAddressDetector];
+    if (values.ip || settings.ipMasking) options.detectors = [...(options.detectors ?? defaultDetectors), ipAddressDetector];
     const maxBytes = maxBytesFor(options);
     const clipboard = reader && systemClipboard({ fallback: terminalFallback(reader) });
-    if (command === "session") return await runSession(options, clipboard!, reader!, maxBytes);
+    if (command === "session") {
+      const code = await runSession(options, clipboard!, reader!, maxBytes);
+      await showUpdate();
+      return code;
+    }
     const raw = clipboard ? await clipboard.read(maxBytes) : await readInput(values.input, maxBytes);
     let result;
     let text;
@@ -144,6 +182,7 @@ async function main(argv: string[]): Promise<number> {
       const via = await clipboard.write(text);
       process.stderr.write(`scrappy: sanitized ${summarize(result.findings)} ${destination(via)}\n`);
     }
+    await showUpdate();
     return 0;
   } catch (error) {
     const safe = error instanceof ScrappyError || error instanceof CliError;
@@ -154,24 +193,36 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-/** `scrappy config` shows settings; `--global --enable-ip-masking` / `--disable-ip-masking` saves one. */
-async function configCommand(values: { global?: boolean; "enable-ip-masking"?: boolean; "disable-ip-masking"?: boolean; [k: string]: unknown }, extra: string[]): Promise<number> {
-  const enable = values["enable-ip-masking"] === true;
-  const disable = values["disable-ip-masking"] === true;
-  const others = Object.keys(values).filter((k) => !["global", "enable-ip-masking", "disable-ip-masking", "format"].includes(k));
+/** On/off settings: `--enable-<flag>` / `--disable-<flag>` with `scrappy config --global`. */
+const TOGGLES = { "ip-masking": "ipMasking", "update-check": "updateCheck" } as const satisfies Record<string, keyof Settings>;
+
+/** `scrappy config` shows settings; `--global` with `--enable-…` / `--disable-…` saves them. */
+async function configCommand(values: Record<string, unknown>, extra: string[]): Promise<number> {
+  const changes: Partial<Settings> = {};
+  let conflict: string | undefined;
+  for (const [flag, key] of Object.entries(TOGGLES)) {
+    const on = values[`enable-${flag}`] === true;
+    const off = values[`disable-${flag}`] === true;
+    if (on && off) conflict = `use either --enable-${flag} or --disable-${flag}, not both`;
+    else if (on || off) changes[key] = on;
+  }
+  const allowed = ["global", "format", ...Object.keys(TOGGLES).flatMap((f) => [`enable-${f}`, `disable-${f}`])];
+  const other = Object.keys(values).find((k) => !allowed.includes(k));
+  const changing = Object.keys(changes).length > 0;
   const problem =
     extra.length > 0 ? `unexpected argument: ${extra[0]}`
-    : others.length > 0 ? `config does not take --${others[0]}`
-    : enable && disable ? "use either --enable-ip-masking or --disable-ip-masking, not both"
-    : (enable || disable) && !values.global ? "settings are global: add --global"
-    : values.global && !enable && !disable ? "--global needs --enable-ip-masking or --disable-ip-masking"
+    : other ? `config does not take --${other}`
+    : conflict ? conflict
+    : changing && !values.global ? "settings are global: add --global"
+    : values.global && !changing ? "--global needs a setting to change, e.g. --enable-ip-masking"
     : undefined;
   if (problem) return usageError(problem);
   try {
     const path = settingsPath();
-    const settings = await readSettings(path);
-    if (enable || disable) await writeSettings({ ...settings, ipMasking: enable }, path);
-    process.stdout.write(`ip-masking: ${enable || (!disable && settings.ipMasking) ? "on" : "off"}   (${path})\n`);
+    const settings = { ...(await readSettings(path)), ...changes };
+    if (changing) await writeSettings(settings, path);
+    const lines = Object.entries(TOGGLES).map(([flag, key]) => `${flag}: ${settings[key] ? "on" : "off"}`);
+    process.stdout.write(`${lines.join("\n")}\n(settings file: ${path})\n`);
     return 0;
   } catch (error) {
     process.stderr.write(`scrappy: ${error instanceof CliError ? error.message : "cannot save settings"}\n`);

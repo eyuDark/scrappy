@@ -6,7 +6,11 @@ import { CliError } from "./errors.ts";
 /** Saved preferences only. Never input text or mappings. */
 export interface Settings {
   ipMasking: boolean;
+  /** Daily check for a newer version; on unless turned off. */
+  updateCheck: boolean;
 }
+
+const DEFAULTS: Settings = { ipMasking: false, updateCheck: true };
 
 export function settingsPath(env = process.env, platform = process.platform): string {
   const base = env.XDG_CONFIG_HOME || (platform === "win32" && env.APPDATA) || join(homedir(), ".config");
@@ -19,7 +23,7 @@ export async function readSettings(path = settingsPath()): Promise<Settings> {
     raw = await readFile(path, "utf8");
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return { ipMasking: false };
+    if (code === "ENOENT") return { ...DEFAULTS };
     throw new CliError(`cannot read settings file ${path} (${code ?? "unknown error"})`);
   }
   let parsed: unknown;
@@ -29,7 +33,8 @@ export async function readSettings(path = settingsPath()): Promise<Settings> {
     throw new CliError(`settings file is not valid JSON: ${path}`);
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new CliError(`settings file must be a JSON object: ${path}`);
-  return { ipMasking: (parsed as { ipMasking?: unknown }).ipMasking === true };
+  const saved = parsed as Partial<Record<keyof Settings, unknown>>;
+  return { ipMasking: saved.ipMasking === true, updateCheck: saved.updateCheck !== false };
 }
 
 export async function writeSettings(settings: Settings, path = settingsPath()): Promise<void> {

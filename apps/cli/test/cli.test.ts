@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
+import { createServer, type Server } from "node:http";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -122,7 +123,7 @@ test("config --global --enable-ip-masking persists until disabled", () => {
   const on = cli(["config", "--global", "--enable-ip-masking"]);
   assert.equal(on.status, 0, on.stderr);
   assert.match(on.stdout, /ip-masking: on/);
-  assert.deepEqual(JSON.parse(readFileSync(join(CONFIG_HOME, "scrappy", "config.json"), "utf8")), { ipMasking: true });
+  assert.deepEqual(JSON.parse(readFileSync(join(CONFIG_HOME, "scrappy", "config.json"), "utf8")), { ipMasking: true, updateCheck: true });
   assert.equal(cli(["sanitize"], input).stdout, "client [IP_ADDRESS_1]");
   assert.match(cli(["config"]).stdout, /ip-masking: on/);
 
@@ -189,6 +190,102 @@ test("session with no clipboard tool: paste + Ctrl-D for both sanitize and resto
   assert.ok(!/john/.test(stderr), "originals never reach stderr");
 });
 
+// ---- Update notice ----------------------------------------------------------------------------
+
+/** A fake npm registry on localhost. `answer: "hang"` accepts requests and never replies. */
+async function fakeRegistry(answer: string | "hang") {
+  let hits = 0;
+  const server: Server = createServer((req, res) => {
+    hits++;
+    if (answer === "hang") return;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify(req.url === "/scrappy-redact/latest" ? { version: answer } : {}));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as { port: number };
+  return { url: `http://127.0.0.1:${port}`, hits: () => hits, close: () => (server.closeAllConnections(), server.close()) };
+}
+
+/** Env for update tests: fresh settings dir, fake registry, and CI unset (GitHub Actions sets it). */
+function updateEnv(registryUrl: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.CI;
+  delete env.SCRAPPY_NO_UPDATE_CHECK;
+  return { ...env, XDG_CONFIG_HOME: mkdtempSync(join(tmpdir(), "scrappy-upd-")), SCRAPPY_REGISTRY_URL: registryUrl, ...extra };
+}
+
+/** Runs the CLI under a pseudo-terminal so stdout/stderr are TTYs (macOS and Linux `script`). */
+async function inTerminal(args: string[], env: NodeJS.ProcessEnv) {
+  const cmd = [process.execPath, "--conditions=source", "--no-warnings", MAIN, ...args];
+  const quote = (a: string) => `'${a.replace(/'/g, "'\\''")}'`;
+  // stdin must not be a socket (Node's default pipe): macOS `script` fails with tcgetattr on sockets.
+  const options = { env, stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"] };
+  const child =
+    process.platform === "darwin"
+      ? spawn("/usr/bin/script", ["-q", "/dev/null", ...cmd], options)
+      : spawn("script", ["-qec", cmd.map(quote).join(" "), "/dev/null"], options);
+  let output = "";
+  child.stdout.setEncoding("utf8").on("data", (d: string) => (output += d));
+  const started = performance.now();
+  const [code] = await once(child, "close");
+  return { code, output: output.replace(/\r/g, ""), ms: performance.now() - started };
+}
+
+const LOG = join(dir, "update.log");
+writeFileSync(LOG, "mail a@b.io");
+const PKG_VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+const NOTICE = `scrappy 99.0.0 is available (you have ${PKG_VERSION}). Update: npm i -g scrappy-redact@latest`;
+
+test("update notice: shown on a terminal, then served from the daily cache", async (t) => {
+  const registry = await fakeRegistry("99.0.0");
+  t.after(registry.close);
+  const env = updateEnv(registry.url);
+
+  const first = await inTerminal(["sanitize", "-i", LOG], env);
+  assert.equal(first.code, 0, first.output);
+  assert.ok(first.output.includes("mail [EMAIL_1]"));
+  assert.ok(first.output.includes(NOTICE), first.output);
+  assert.equal(registry.hits(), 1);
+
+  const second = await inTerminal(["sanitize", "-i", LOG], env);
+  assert.ok(second.output.includes(NOTICE));
+  assert.equal(registry.hits(), 1, "second run uses the cache, no network");
+});
+
+test("update notice: never when piped, never for --version or help, never in CI or when turned off", async (t) => {
+  const registry = await fakeRegistry("99.0.0");
+  t.after(registry.close);
+
+  const piped = spawnSync(process.execPath, ["--conditions=source", "--no-warnings", MAIN, "sanitize"], { input: "x", encoding: "utf8", env: updateEnv(registry.url) });
+  assert.ok(!piped.stderr.includes("is available"), `piped: ${piped.stderr}`);
+  for (const args of [["--version"], ["help"]]) {
+    const r = await inTerminal(args, updateEnv(registry.url));
+    assert.ok(!r.output.includes("is available"), `${args.join(" ")}: ${r.output.slice(-300)}`);
+  }
+  const ci = await inTerminal(["sanitize", "-i", LOG], updateEnv(registry.url, { CI: "true" }));
+  assert.ok(!ci.output.includes("is available"), `CI: ${ci.output}`);
+  const envOff = await inTerminal(["sanitize", "-i", LOG], updateEnv(registry.url, { SCRAPPY_NO_UPDATE_CHECK: "1" }));
+  assert.ok(!envOff.output.includes("is available"), `SCRAPPY_NO_UPDATE_CHECK: ${envOff.output}`);
+
+  const off = updateEnv(registry.url);
+  const disable = spawnSync(process.execPath, ["--conditions=source", "--no-warnings", MAIN, "config", "--global", "--disable-update-check"], { encoding: "utf8", env: off });
+  assert.match(disable.stdout, /update-check: off/);
+  const configOff = await inTerminal(["sanitize", "-i", LOG], off);
+  assert.ok(!configOff.output.includes("is available"), `config off: ${configOff.output}`);
+  assert.equal(registry.hits(), 0, "no network at all in any of these cases");
+});
+
+test("update notice: a registry that never answers can't hang the command", async (t) => {
+  const registry = await fakeRegistry("hang");
+  t.after(registry.close);
+  const run = await inTerminal(["sanitize", "-i", LOG], updateEnv(registry.url));
+  assert.equal(run.code, 0);
+  assert.ok(run.output.includes("mail [EMAIL_1]"));
+  assert.ok(!run.output.includes("is available"));
+  assert.ok(run.ms < 4000, `took ${Math.round(run.ms)}ms`);
+});
+
 test("--version prints the package version", () => {
   const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   for (const flag of ["--version", "-v"]) {
@@ -205,7 +302,7 @@ test("help lists every command and option: `scrappy help`, --help, -h, and bare 
     assert.equal(r.stdout, pages[0]!.stdout, "every way to ask for help prints the same page");
   }
   const page = pages[0]!.stdout;
-  for (const item of ["sanitize", "inspect", "session", "config", "help", "--input", "--clipboard", "--format", "--config", "--ip", "--global", "--enable-ip-masking", "--disable-ip-masking", "--version", "--help", "Examples"]) {
+  for (const item of ["sanitize", "inspect", "session", "config", "help", "--input", "--clipboard", "--format", "--config", "--ip", "--global", "--enable-ip-masking", "--disable-ip-masking", "--enable-update-check", "--disable-update-check", "--version", "--help", "Examples"]) {
     assert.ok(page.includes(item), `help is missing ${item}`);
   }
 });

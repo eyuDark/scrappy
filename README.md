@@ -7,7 +7,7 @@ Payment failed for john@example.com, key sk-ant-api03-…
 Payment failed for [EMAIL_1], key [API_KEY_1]
 ```
 
-Everything runs locally. Scrappy makes no network calls, and nothing is written to disk.
+Everything runs locally: **your text never leaves your machine and is never written to disk.** The only network request Scrappy makes is a once-a-day check of the npm registry for a newer version number (see [Updates](#updates)), and you can turn it off.
 
 ## Install
 
@@ -71,6 +71,18 @@ scrappy help        # or scrappy --help, or just scrappy
 ```
 
 Stdout carries only sanitized content. Exit codes are `0` for success, `1` for an input, config or processing error, and `2` for invalid usage. Your input file is never modified.
+
+## Updates
+
+When a newer version exists, Scrappy says so after a command finishes:
+
+```
+scrappy 0.5.0 is available (you have 0.4.0). Update: npm i -g scrappy-redact@latest
+```
+
+- It asks the public npm registry for the latest version number of `scrappy-redact`, at most once a day. **Nothing about you or your text is sent.**
+- It only runs on a terminal. It never runs when output is piped or redirected, or in CI. It waits at most about 1 second, and stays silent when offline.
+- To turn it off: `scrappy config --global --disable-update-check`, or set `SCRAPPY_NO_UPDATE_CHECK=1`.
 
 ## What it detects
 
