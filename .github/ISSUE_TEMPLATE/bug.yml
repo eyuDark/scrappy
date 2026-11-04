@@ -1,0 +1,25 @@
+name: Bug
+description: Something else doesn't work (crash, clipboard, install, wrong exit code…).
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "**Don't paste real secrets or personal data.** Use fake look-alikes in any example."
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Scrappy version and OS
+      placeholder: e.g. 0.4.0 on Ubuntu 24.04 (Wayland)
+    validations:
+      required: true

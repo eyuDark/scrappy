@@ -1,10 +1,17 @@
 # Scrappy
 
-Strip secrets and personal data from text before you paste it into ChatGPT, Claude or any other AI tool. Sensitive values become typed placeholders, so the AI still understands the text:
+[![npm](https://img.shields.io/npm/v/scrappy-redact?label=npm&color=cb3837)](https://www.npmjs.com/package/scrappy-redact)
+[![CI](https://github.com/eyuDark/scrappy/actions/workflows/ci.yml/badge.svg)](https://github.com/eyuDark/scrappy/actions/workflows/ci.yml)
+[![provenance](https://img.shields.io/badge/npm-provenance-2ea44f)](https://www.npmjs.com/package/scrappy-redact#provenance)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-```
-Payment failed for john@example.com, key sk-ant-api03-…
-Payment failed for [EMAIL_1], key [API_KEY_1]
+**Paste logs into AI without pasting your secrets.** Scrappy replaces API keys, passwords, tokens, emails, card numbers and phone numbers with placeholders like `[EMAIL_1]`, so the AI still understands the text and never sees the real values.
+
+![Scrappy turning a log full of secrets into placeholders](https://raw.githubusercontent.com/eyuDark/scrappy/main/docs/demo.gif)
+
+```sh
+npm install -g scrappy-redact
+scrappy sanitize --clipboard    # copy, run, paste into ChatGPT / Claude
 ```
 
 Everything runs locally: **your text never leaves your machine and is never written to disk.** The only network request Scrappy makes is a once-a-day check of the npm registry for a newer version number (see [Updates](#updates)), and you can turn it off.

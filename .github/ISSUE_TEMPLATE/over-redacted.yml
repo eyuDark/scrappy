@@ -1,0 +1,32 @@
+name: Redacted something harmless
+description: Scrappy replaced text that isn't sensitive (a false positive).
+title: "Over-redacted: "
+labels: ["false-positive"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! False positives make output less useful for AI tools, so we want to know.
+        **Don't paste real secrets or personal data.** Swap anything sensitive for a fake look-alike.
+  - type: textarea
+    id: input
+    attributes:
+      label: Input
+      description: The text, or a minimal snippet, where harmless content was replaced.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: What Scrappy printed
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Scrappy version
+      description: Output of `scrappy --version`
+    validations:
+      required: true
