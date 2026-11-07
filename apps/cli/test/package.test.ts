@@ -32,7 +32,7 @@ test("the packed tarball installs and runs as `scrappy` with no dependencies", a
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, "ping [EMAIL_1] from 10.0.0.7");
   assert.equal(spawnSync(bin, ["sanitize", "--ip"], { input: "from 10.0.0.7", encoding: "utf8", env }).stdout, "from [IP_ADDRESS_1]");
-  assert.match(execFileSync(bin, ["help"], { encoding: "utf8", env }), /scrappy config +\[--global --enable-ip-masking/);
+  assert.match(execFileSync(bin, ["help"], { encoding: "utf8", env }), /scrappy config +\[--global --enable-<setting>/);
 
   // On a real terminal, a registry that never answers must not hang the installed CLI.
   const hang = createServer(() => {}).listen(0, "127.0.0.1");

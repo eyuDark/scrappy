@@ -116,6 +116,16 @@ test("IPs are masked only with --ip", () => {
   assert.equal(JSON.parse(cli(["inspect", "--ip"], input).stdout).stats.findingCount, 3);
 });
 
+test("domains are masked only with --domains or the domain-masking setting", () => {
+  const input = "ssh admin@db01.acme.internal, password=hunter2, docs at README.md";
+  assert.equal(cli(["sanitize"], input).stdout, "ssh [EMAIL_1], password=[PASSWORD_1], docs at README.md");
+  assert.equal(cli(["sanitize", "--domains"], "host db01.acme.internal:5432 for vpn.acme.io").stdout, "host [DOMAIN_1]:5432 for [DOMAIN_2]");
+  assert.match(cli(["config", "--global", "--enable-domain-masking"]).stdout, /domain-masking: on/);
+  assert.equal(cli(["sanitize"], "host vpn.acme.io").stdout, "host [DOMAIN_1]");
+  assert.match(cli(["config", "--global", "--disable-domain-masking"]).stdout, /domain-masking: off/);
+  assert.equal(cli(["sanitize"], "host vpn.acme.io").stdout, "host vpn.acme.io");
+});
+
 test("config --global --enable-ip-masking persists until disabled", () => {
   const input = "client 196.188.12.44";
   assert.match(cli(["config"]).stdout, /ip-masking: off/);
@@ -123,7 +133,7 @@ test("config --global --enable-ip-masking persists until disabled", () => {
   const on = cli(["config", "--global", "--enable-ip-masking"]);
   assert.equal(on.status, 0, on.stderr);
   assert.match(on.stdout, /ip-masking: on/);
-  assert.deepEqual(JSON.parse(readFileSync(join(CONFIG_HOME, "scrappy", "config.json"), "utf8")), { ipMasking: true, updateCheck: true });
+  assert.deepEqual(JSON.parse(readFileSync(join(CONFIG_HOME, "scrappy", "config.json"), "utf8")), { ipMasking: true, domainMasking: false, updateCheck: true });
   assert.equal(cli(["sanitize"], input).stdout, "client [IP_ADDRESS_1]");
   assert.match(cli(["config"]).stdout, /ip-masking: on/);
 
@@ -302,7 +312,7 @@ test("help lists every command and option: `scrappy help`, --help, -h, and bare 
     assert.equal(r.stdout, pages[0]!.stdout, "every way to ask for help prints the same page");
   }
   const page = pages[0]!.stdout;
-  for (const item of ["sanitize", "inspect", "session", "config", "help", "--input", "--clipboard", "--format", "--config", "--ip", "--global", "--enable-ip-masking", "--disable-ip-masking", "--enable-update-check", "--disable-update-check", "--version", "--help", "Examples"]) {
+  for (const item of ["sanitize", "inspect", "session", "config", "help", "--input", "--clipboard", "--format", "--config", "--ip", "--global", "--enable-ip-masking", "--disable-ip-masking", "--domains", "--enable-domain-masking", "--disable-domain-masking", "--enable-update-check", "--disable-update-check", "--version", "--help", "Examples"]) {
     assert.ok(page.includes(item), `help is missing ${item}`);
   }
 });

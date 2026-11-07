@@ -6,11 +6,12 @@ import { CliError } from "./errors.ts";
 /** Saved preferences only. Never input text or mappings. */
 export interface Settings {
   ipMasking: boolean;
+  domainMasking: boolean;
   /** Daily check for a newer version; on unless turned off. */
   updateCheck: boolean;
 }
 
-const DEFAULTS: Settings = { ipMasking: false, updateCheck: true };
+const DEFAULTS: Settings = { ipMasking: false, domainMasking: false, updateCheck: true };
 
 export function settingsPath(env = process.env, platform = process.platform): string {
   const base = env.XDG_CONFIG_HOME || (platform === "win32" && env.APPDATA) || join(homedir(), ".config");
@@ -34,7 +35,7 @@ export async function readSettings(path = settingsPath()): Promise<Settings> {
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new CliError(`settings file must be a JSON object: ${path}`);
   const saved = parsed as Partial<Record<keyof Settings, unknown>>;
-  return { ipMasking: saved.ipMasking === true, updateCheck: saved.updateCheck !== false };
+  return { ipMasking: saved.ipMasking === true, domainMasking: saved.domainMasking === true, updateCheck: saved.updateCheck !== false };
 }
 
 export async function writeSettings(settings: Settings, path = settingsPath()): Promise<void> {

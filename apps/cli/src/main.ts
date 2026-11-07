@@ -8,6 +8,7 @@ import {
   ScrappyError,
   createPatternDetector,
   defaultDetectors,
+  domainDetector,
   ipAddressDetector,
   sanitize,
   sanitizeJson,
@@ -26,10 +27,10 @@ const HELP = `scrappy: strip secrets and personal data from text before it goes 
 Runs locally; nothing leaves your machine.
 
 Usage
-  scrappy sanitize [--input <file> | --clipboard] [--format text|json] [--config <file>] [--ip]
-  scrappy inspect  [--input <file> | --clipboard] [--format text|json] [--config <file>] [--ip]
-  scrappy session  [--config <file>] [--ip]
-  scrappy config   [--global --enable-ip-masking | --disable-ip-masking | --enable-update-check | --disable-update-check]
+  scrappy sanitize [--input <file> | --clipboard] [--format text|json] [--config <file>] [--ip] [--domains]
+  scrappy inspect  [--input <file> | --clipboard] [--format text|json] [--config <file>] [--ip] [--domains]
+  scrappy session  [--config <file>] [--ip] [--domains]
+  scrappy config   [--global --enable-<setting> | --disable-<setting>]   settings: ip-masking, domain-masking, update-check
   scrappy help
 
 Commands
@@ -49,9 +50,14 @@ Options
   -f, --format <fmt>        "text" (default) or "json": sanitizes JSON values and keys, keeps structure.
   -c, --config <file>       JSON config with "policy" and "customDetectors" (see the README).
       --ip                  Also mask IPv4/IPv6 addresses for this run (off by default).
+      --domains             Also mask domain names such as db01.acme.internal for this run (off by default).
   -g, --global              With config: change a saved setting.
       --enable-ip-masking   With config --global: always mask IP addresses.
       --disable-ip-masking  With config --global: stop masking IP addresses by default.
+      --enable-domain-masking
+                            With config --global: always mask domain names.
+      --disable-domain-masking
+                            With config --global: stop masking domain names by default.
       --enable-update-check With config --global: check npm once a day for a newer version (default).
       --disable-update-check
                             With config --global: never check. SCRAPPY_NO_UPDATE_CHECK=1 also turns it off.
@@ -63,6 +69,7 @@ Examples
   cat app.log | scrappy sanitize > safe.log    clean a log file
   scrappy inspect -i app.log                   see what would be replaced
   scrappy sanitize --ip -i access.log          also mask IP addresses
+  scrappy sanitize --domains -i notes.txt      also mask domain names
   scrappy config --global --enable-ip-masking  mask IPs in every run from now on
 
 Update notice: once a day, on a terminal only, scrappy asks the npm registry for the latest version
@@ -107,9 +114,12 @@ async function main(argv: string[]): Promise<number> {
         input: { type: "string", short: "i" },
         clipboard: { type: "boolean" },
         ip: { type: "boolean" },
+        domains: { type: "boolean" },
         global: { type: "boolean", short: "g" },
         "enable-ip-masking": { type: "boolean" },
         "disable-ip-masking": { type: "boolean" },
+        "enable-domain-masking": { type: "boolean" },
+        "disable-domain-masking": { type: "boolean" },
         "enable-update-check": { type: "boolean" },
         "disable-update-check": { type: "boolean" },
         format: { type: "string", short: "f", default: "text" },
@@ -135,9 +145,9 @@ async function main(argv: string[]): Promise<number> {
   const usageProblem =
     command !== "sanitize" && command !== "inspect" && command !== "session" ? "expected a command: sanitize, inspect or session"
     : extra.length > 0 ? `unexpected argument: ${extra[0]}`
-    : values.global || values["enable-ip-masking"] || values["disable-ip-masking"] || values["enable-update-check"] || values["disable-update-check"]
+    : values.global || values["enable-ip-masking"] || values["disable-ip-masking"] || values["enable-domain-masking"] || values["disable-domain-masking"] || values["enable-update-check"] || values["disable-update-check"]
       ? "--global and the --enable/--disable settings belong to `scrappy config`"
-    : command === "session" && (values.input !== undefined || values.clipboard || values.format !== "text") ? "session takes only --config and --ip"
+    : command === "session" && (values.input !== undefined || values.clipboard || values.format !== "text") ? "session takes only --config, --ip and --domains"
     : values.format !== "text" && values.format !== "json" ? "--format must be text or json"
     : values.input !== undefined && values.clipboard ? "use either --input or --clipboard, not both"
     : command !== "session" && values.input === undefined && !values.clipboard && process.stdin.isTTY ? "no input: pipe text to stdin, or pass --input or --clipboard"
@@ -152,6 +162,7 @@ async function main(argv: string[]): Promise<number> {
     showUpdate = startUpdateCheck(settings);
     const options = values.config ? await loadConfig(values.config) : {};
     if (values.ip || settings.ipMasking) options.detectors = [...(options.detectors ?? defaultDetectors), ipAddressDetector];
+    if (values.domains || settings.domainMasking) options.detectors = [...(options.detectors ?? defaultDetectors), domainDetector];
     const maxBytes = maxBytesFor(options);
     const clipboard = reader && systemClipboard({ fallback: terminalFallback(reader) });
     if (command === "session") {
@@ -194,7 +205,7 @@ async function main(argv: string[]): Promise<number> {
 }
 
 /** On/off settings: `--enable-<flag>` / `--disable-<flag>` with `scrappy config --global`. */
-const TOGGLES = { "ip-masking": "ipMasking", "update-check": "updateCheck" } as const satisfies Record<string, keyof Settings>;
+const TOGGLES = { "ip-masking": "ipMasking", "domain-masking": "domainMasking", "update-check": "updateCheck" } as const satisfies Record<string, keyof Settings>;
 
 /** `scrappy config` shows settings; `--global` with `--enable-…` / `--disable-…` saves them. */
 async function configCommand(values: Record<string, unknown>, extra: string[]): Promise<number> {

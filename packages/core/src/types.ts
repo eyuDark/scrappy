@@ -7,6 +7,8 @@ export const SENSITIVE_TYPES = [
   "PAYMENT_CARD",
   /** Opt-in: not detected by default. */
   "IP_ADDRESS",
+  /** Opt-in: not detected by default. */
+  "DOMAIN",
   "API_KEY",
   "ACCESS_TOKEN",
   "JWT",

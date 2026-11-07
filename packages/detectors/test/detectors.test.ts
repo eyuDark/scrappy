@@ -7,6 +7,7 @@ import {
   createPatternDetector,
   defaultDetectors,
   emailDetector,
+  domainDetector,
   ipAddressDetector,
   jwtDetector,
   passwordAssignmentDetector,
@@ -209,6 +210,27 @@ test("ip addresses are opt-in: not part of the default detectors", () => {
   assert.ok(!defaultDetectors.includes(ipAddressDetector));
 });
 
+test("domain detector finds hostnames, not filenames or code", () => {
+  const cases: [string, string][] = [
+    ["server db01.acme-internal.net ok", "db01.acme-internal.net"],
+    ["https://admin@vpn.acme.io:443/login", "vpn.acme.io"],
+    ["host DB01.Acme.internal; next", "DB01.Acme.internal"],
+    ["see google.co.uk.", "google.co.uk"],
+    ["Domain: acme.corp", "acme.corp"],
+  ];
+  for (const [input, domain] of cases) assert.deepEqual(matches(domainDetector, input), [domain], input);
+  for (const negative of ["see README.md", "run app.js", "Math.PI", "console.log(x)", "this.state", "v1.2.3", "e.g. this", "photo.jpeg", "localhost:3000"]) {
+    assert.deepEqual(matches(domainDetector, negative), [], negative);
+  }
+});
+
+test("domains are opt-in, and an email keeps its domain inside one placeholder", () => {
+  assert.equal(run("host vpn.acme.io"), "host vpn.acme.io");
+  assert.ok(!defaultDetectors.includes(domainDetector));
+  const withDomains = (input: string) => sanitize(input, { detectors: [...defaultDetectors, domainDetector] }).text;
+  assert.equal(withDomains("mail ops@acme.io, host acme.io, password=hunter2"), "mail [EMAIL_1], host [DOMAIN_1], password=[PASSWORD_1]");
+});
+
 test("custom pattern detector redacts the `value` group and runs validate", () => {
   const account = createPatternDetector({ id: "account", type: "ACCOUNT_NUMBER", pattern: /account (?<value>\d{6})\b/i });
   assert.deepEqual(matches(account, "Account 100284 and account 12"), ["100284"]);
@@ -242,10 +264,13 @@ test("adversarial: 1 MB pathological inputs finish quickly", () => {
     dottedNumbers: "1.".repeat(n / 2),
     colonHex: "a:".repeat(n / 2),
     doubleColons: "::".repeat(n / 2),
+    labels: "a.".repeat(n / 2),
+    hyphenLabels: "a-".repeat(n / 2),
+    longLabels: ("a".repeat(63) + ".").repeat(n / 64),
   };
   for (const [name, input] of Object.entries(inputs)) {
     const started = performance.now();
-    sanitize(input, { detectors: [...defaultDetectors, ipAddressDetector] });
+    sanitize(input, { detectors: [...defaultDetectors, ipAddressDetector, domainDetector] });
     const ms = performance.now() - started;
     assert.ok(ms < 2000, `${name} took ${Math.round(ms)}ms`);
   }

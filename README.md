@@ -71,6 +71,14 @@ scrappy config --global --disable-ip-masking   # back to the default
 
 IPv4 and IPv6 are both covered, including `::1`, `fe80::1%eth0` and `::ffff:192.0.2.128`. Ports and brackets stay visible. Version numbers, times like `12:30:45`, MAC addresses and invalid values like `999.1.1.1` are not touched.
 
+**Domain names (opt-in).** Hostnames are left alone by default too. Mask them with `--domains`, or always with `scrappy config --global --enable-domain-masking`:
+
+```sh
+scrappy sanitize --domains -i notes.txt  # db01.acme.internal:5432 → [DOMAIN_1]:5432
+```
+
+Public domains, internal names like `.internal`, `.corp` and `.local`, and country domains like `.co.uk` are covered. Filenames such as `README.md` or `app.js` and code like `console.log` are not touched. An email address stays one `[EMAIL_n]` placeholder.
+
 **All commands and options:**
 
 ```sh
@@ -105,6 +113,7 @@ scrappy 0.5.0 is available (you have 0.4.0). Update: npm i -g scrappy-redact@lat
 | `PHONE` | International numbers (`+251 911 234 567`), or any number right after a word like phone, call, mobile or WhatsApp |
 | `SECRET` | Random-looking tokens with no known prefix, e.g. `X-Internal-Auth: Hq3Zm8Wv1Ks6…` |
 | `IP_ADDRESS` | IPv4 and IPv6. **Only with `--ip` or `scrappy config --global --enable-ip-masking`** |
+| `DOMAIN` | Hostnames such as `vpn.acme.io` or `db01.acme.internal`. **Only with `--domains` or `scrappy config --global --enable-domain-masking`** |
 
 `SECRET` is a best guess. It skips hashes, UUIDs and code identifiers, but it can flag base64 data, such as certificate fingerprints. To turn it off, list the types you want to keep in `enabledTypes` and leave out `SECRET`:
 
